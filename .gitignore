@@ -1,0 +1,10 @@
+data/
+WorldArena_Robotwin2.0/
+models_downloaded/
+pretrained_models/
+ssv2-probe.pth.tar
+vith16.pth.tar
+output/
+*.pyc
+*.cpython-310.pyc
+__pycache__/

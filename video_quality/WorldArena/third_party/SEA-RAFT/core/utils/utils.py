@@ -5,7 +5,15 @@ from scipy import interpolate
 
 def load_ckpt(model, path):
     """ Load checkpoint """
-    state_dict = torch.load(path, map_location=torch.device('cpu'))
+    if str(path).endswith(".safetensors"):
+        from safetensors.torch import load_file
+        state_dict = load_file(path)
+    else:
+        try:
+            state_dict = torch.load(path, map_location=torch.device('cpu'), weights_only=False)
+        except TypeError:
+            # Older PyTorch versions do not support the weights_only argument.
+            state_dict = torch.load(path, map_location=torch.device('cpu'))
     model.load_state_dict(state_dict, strict=False)
 
 def resize_data(img1, img2, flow, factor=1.0):

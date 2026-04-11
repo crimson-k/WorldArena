@@ -29,6 +29,7 @@ from .flow_aepe_metrics import compute_photometric_smoothness
 from .motion_smoothness_metrics import compute_motion_smoothness
 
 import re
+import time
 from collections import defaultdict
 from .depth_accuracy import compute_depth_accuracy
 
@@ -235,6 +236,7 @@ class WorldArenaBenchmark(object):
         if (not os.path.exists(json_path)) or overwrite:
 
             results_dict = {}
+            timing_dict = {}
             
             if dimension_list is None:
                 dimension_list = self.build_full_dimension_list()
@@ -251,6 +253,7 @@ class WorldArenaBenchmark(object):
             for dimension in dimension_list:
                 
                 print0(f"Evaluating: {dimension}")
+                dim_start_time = time.perf_counter()
 
                 # choose dataset roots per dimension (action_following can use dedicated roots)
                 if dimension == 'action_following':
@@ -401,12 +404,17 @@ class WorldArenaBenchmark(object):
                 # Standardize structure and attach normalized per-video scores
                 results = _to_standard_results(dimension, results, data_base)
                 results = _add_normalized_scores(dimension, results)
+                dim_elapsed = time.perf_counter() - dim_start_time
+                timing_dict[dimension] = round(dim_elapsed, 4)
+                print0(f"Finished {dimension} in {dim_elapsed:.2f}s")
 
                 if dimension == "psnr_ssim":
                     results_dict["psnr"] = results["psnr"]
                     results_dict["ssim"] = results["ssim"]
                 else:
                     results_dict[dimension] = results
+
+            results_dict["_timing_seconds"] = timing_dict
             
 
             results_json = os.path.join(self.output_path,f'{data_name}_results.json')    
@@ -417,7 +425,6 @@ class WorldArenaBenchmark(object):
 
             with open(json_path, "r") as f:
                 results_dict = json.load(f)
-
 
 
 
