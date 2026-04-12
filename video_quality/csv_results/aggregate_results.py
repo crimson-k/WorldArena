@@ -104,11 +104,13 @@ def _normalize_video_id(video_id: str) -> str:
 
     Example:
       data_episode0_s000000 -> episode0_s000000
+      worldarena_auto_eval_episode0_s000000 -> episode0_s000000
     """
     if not video_id:
         return video_id
-    if re.match(r"^data_episode.+", video_id):
-        return video_id[len("data_"):]
+    for synthetic_prefix in ("data_", "worldarena_auto_eval_"):
+        if video_id.startswith(f"{synthetic_prefix}episode"):
+            return video_id[len(synthetic_prefix):]
     return video_id
 
 

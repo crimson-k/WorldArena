@@ -5,6 +5,7 @@ This script keeps only the pieces required by the downstream README format:
 - split each stitched video into left-half GT and right-half generated video
 - save GT first frame
 - write a minimal summary.json with gt_path/image/prompt
+- optionally split prepared data into evenly balanced shard folders
 
 Output layout:
   <work_dir>/
@@ -13,6 +14,13 @@ Output layout:
     <model_name>_test_vlm/    # generated videos for run_VLM_judge.sh
     gt_first_frames/
     summary.json
+    shards/
+      shard_00/
+        gt_videos/
+        <model_name>_test/
+        <model_name>_test_vlm/
+        gt_first_frames/
+        summary.json
 """
 
 from __future__ import annotations
@@ -38,6 +46,7 @@ class PreparedSample:
     video_id: str
     gt_video: Path
     gen_video: Path
+    vlm_video: Path
     first_frame: Path
     prompt: str
 
@@ -62,6 +71,16 @@ def _default_log(msg: str) -> None:
 
 def ensure_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
+
+
+def link_or_copy(src: Path, dst: Path) -> None:
+    ensure_dir(dst.parent)
+    if dst.exists():
+        dst.unlink()
+    try:
+        os.link(src, dst)
+    except OSError:
+        shutil.copy2(src, dst)
 
 
 def load_jsonl(path: Path) -> List[Dict]:
@@ -224,6 +243,105 @@ def build_preprocess_compatible_gen_name(gt_video: Path, video_id: str) -> str:
     return f"{prefix}_{video_id}.mp4"
 
 
+def format_shard_name(index: int, num_shards: int) -> str:
+    width = max(2, len(str(max(0, num_shards - 1))))
+    return f"shard_{index:0{width}d}"
+
+
+def split_prepared_evenly(prepared: List[PreparedSample], num_shards: int) -> List[List[PreparedSample]]:
+    buckets: List[List[PreparedSample]] = [[] for _ in range(num_shards)]
+    for idx, sample in enumerate(prepared):
+        buckets[idx % num_shards].append(sample)
+    return buckets
+
+
+def build_shard_inputs(
+    *,
+    prepared: List[PreparedSample],
+    work_dir: Path,
+    model_name: str,
+    num_shards: int,
+    logger: Logger,
+) -> None:
+    if num_shards <= 1:
+        return
+
+    effective_shards = num_shards
+    total = len(prepared)
+    if effective_shards > total:
+        effective_shards = total
+        logger(
+            f"[WARN] num_shards={num_shards} is larger than prepared samples={total}; "
+            f"reduced to {effective_shards}."
+        )
+
+    shard_root = work_dir / "shards"
+    ensure_dir(shard_root)
+
+    buckets = split_prepared_evenly(prepared, effective_shards)
+    manifest: List[Dict] = []
+
+    for shard_index, shard_samples in enumerate(buckets):
+        shard_name = format_shard_name(shard_index, effective_shards)
+        shard_dir = shard_root / shard_name
+        shard_gt_dir = shard_dir / "gt_videos"
+        shard_gen_dir = shard_dir / f"{model_name}_test"
+        shard_vlm_dir = shard_dir / f"{model_name}_test_vlm"
+        shard_first_frames_dir = shard_dir / "gt_first_frames"
+        for d in [shard_gt_dir, shard_gen_dir, shard_vlm_dir, shard_first_frames_dir]:
+            ensure_dir(d)
+
+        shard_summary: List[Dict] = []
+        for sample in shard_samples:
+            shard_gt_video = shard_gt_dir / f"{sample.video_id}.mp4"
+            shard_first_frame = shard_first_frames_dir / f"{sample.video_id}.png"
+            shard_vlm_video = shard_vlm_dir / f"{sample.video_id}.mp4"
+            shard_gen_video = shard_gen_dir / build_preprocess_compatible_gen_name(
+                shard_gt_video, sample.video_id
+            )
+
+            link_or_copy(sample.gt_video, shard_gt_video)
+            link_or_copy(sample.first_frame, shard_first_frame)
+            link_or_copy(sample.vlm_video, shard_vlm_video)
+            link_or_copy(sample.gen_video, shard_gen_video)
+
+            shard_summary.append(
+                {
+                    "gt_path": str(shard_gt_video.resolve()),
+                    "image": str(shard_first_frame.resolve()),
+                    "prompt": [sample.prompt],
+                }
+            )
+
+        shard_summary_path = shard_dir / "summary.json"
+        with shard_summary_path.open("w", encoding="utf-8") as f:
+            json.dump(shard_summary, f, ensure_ascii=False, indent=2)
+
+        shard_meta = {
+            "shard_index": shard_index,
+            "num_shards": effective_shards,
+            "num_samples": len(shard_samples),
+            "summary_json": str(shard_summary_path.resolve()),
+            "gen_video_dir": str(shard_gen_dir.resolve()),
+            "vlm_video_dir": str(shard_vlm_dir.resolve()),
+            "model_name": model_name,
+        }
+        shard_meta_path = shard_dir / "meta.json"
+        with shard_meta_path.open("w", encoding="utf-8") as f:
+            json.dump(shard_meta, f, ensure_ascii=False, indent=2)
+
+        manifest.append(shard_meta)
+
+    manifest_path = shard_root / "manifest.json"
+    with manifest_path.open("w", encoding="utf-8") as f:
+        json.dump(manifest, f, ensure_ascii=False, indent=2)
+
+    logger(
+        f"Shard inputs generated under: {shard_root} "
+        f"(effective_num_shards={effective_shards})."
+    )
+
+
 def prepare_results_data(
     *,
     results_dir: Path,
@@ -231,6 +349,7 @@ def prepare_results_data(
     task_name: str,
     row_mode: str,
     force_rebuild: bool = False,
+    num_shards: int = 1,
     work_dir: Optional[Path] = None,
     records_jsonl: Optional[Path] = None,
     videos_dir: Optional[Path] = None,
@@ -267,6 +386,8 @@ def prepare_results_data(
     if not records:
         raise RuntimeError(f"No valid records found in {resolved_records_path}")
     log(f"Loaded {len(records)} records.")
+    if num_shards < 1:
+        raise ValueError(f"num_shards must be >= 1, got {num_shards}")
 
     used_ids: set[str] = set()
     prepared: List[PreparedSample] = []
@@ -312,6 +433,7 @@ def prepare_results_data(
                 video_id=video_id,
                 gt_video=gt_video,
                 gen_video=gen_video,
+                vlm_video=vlm_video,
                 first_frame=first_frame,
                 prompt=prompt,
             )
@@ -332,6 +454,14 @@ def prepare_results_data(
     with summary_json.open("w", encoding="utf-8") as f:
         json.dump(summary_data, f, ensure_ascii=False, indent=2)
     log(f"summary.json written: {summary_json}")
+
+    build_shard_inputs(
+        prepared=prepared,
+        work_dir=resolved_work_dir,
+        model_name=model_name,
+        num_shards=num_shards,
+        logger=log,
+    )
 
     return PreparedData(
         results_dir=resolved_results_dir,
@@ -357,6 +487,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--task_name", type=str, default="task_auto")
     parser.add_argument("--row_mode", type=str, default="full", choices=["full", "top", "middle", "bottom"])
     parser.add_argument("--force_rebuild", action="store_true", help="Force rebuild split videos and first frames.")
+    parser.add_argument("--num_shards", type=int, default=1, help="Evenly split prepared data into this many shard folders.")
     parser.add_argument("--records_jsonl", type=Path, default=None, help="Optional records jsonl path.")
     parser.add_argument("--videos_dir", type=Path, default=None, help="Optional videos directory path.")
     return parser
@@ -371,6 +502,7 @@ def main() -> None:
         task_name=args.task_name,
         row_mode=args.row_mode,
         force_rebuild=args.force_rebuild,
+        num_shards=args.num_shards,
         work_dir=args.work_dir,
         records_jsonl=args.records_jsonl,
         videos_dir=args.videos_dir,

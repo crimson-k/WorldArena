@@ -33,9 +33,23 @@ def dist_init():
     if 'WORLD_SIZE' not in os.environ:
         os.environ['WORLD_SIZE'] = '1'
 
+    local_rank = int(os.environ.get('LOCAL_RANK', '0'))
+    world_size = int(os.environ.get('WORLD_SIZE', '1'))
+
+    # Single-process evaluation does not need process-group rendezvous.
+    # Skipping init avoids port conflicts when launching multiple shards in parallel.
+    if world_size <= 1:
+        if torch.cuda.is_available():
+            torch.cuda.set_device(local_rank)
+        return
+
+    if torch.distributed.is_initialized():
+        return
+
     backend = 'gloo' if os.name == 'nt' else 'nccl'
     torch.distributed.init_process_group(backend=backend, init_method='env://')
-    torch.cuda.set_device(int(os.environ.get('LOCAL_RANK', '0')))
+    if torch.cuda.is_available():
+        torch.cuda.set_device(local_rank)
 
 
 def all_gather(data):
