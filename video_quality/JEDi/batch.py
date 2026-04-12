@@ -170,8 +170,15 @@ def main():
         collate_fn=collate_videos,
     )
 
-    # JEDiMetric will extract V-JEPA features internally and compute distance
-    jedi = JEDiMetric()
+    # JEDiMetric will extract V-JEPA features internally and compute distance.
+    # Pass local model/config explicitly to avoid unexpected online fetch.
+    feature_cache_dir = Path(args.output_root) / "features_cache"
+    feature_cache_dir.mkdir(parents=True, exist_ok=True)
+    jedi = JEDiMetric(
+        feature_path=str(feature_cache_dir),
+        model_dir=args.model_dir,
+        config_path=args.config_path,
+    )
     # load_features expects two loaders + num_samples
     num_samples = len(names)
     jedi.load_features(real_loader, gen_loader, num_samples=num_samples)

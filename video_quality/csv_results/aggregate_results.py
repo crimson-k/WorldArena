@@ -2,6 +2,7 @@ import csv
 import glob
 import json
 import os
+import re
 from typing import Dict, List, Optional
 
 # Column order for the final CSV
@@ -41,6 +42,10 @@ METRIC_KEY_MAP: Dict[str, str] = {
     "flow_score": "Flow Score",
     "depth_accuracy": "Depth Accuracy",
     "trajectory_accuracy": "Trajectory Accuracy",
+    # Keep both names for compatibility:
+    # - current evaluation output key: photometric_smoothness
+    # - legacy/alternate key: photometric_consistency
+    "photometric_smoothness": "Photometric Consistency",
     "photometric_consistency": "Photometric Consistency",
     "motion_smoothness": "Motion Smoothness",
     "jepa_similarity": "JEPA Similarity",
@@ -94,11 +99,25 @@ def _parse_video_id_from_path(path: str) -> str:
     return name or norm
 
 
+def _normalize_video_id(video_id: str) -> str:
+    """Normalize id variants so rows from different evaluators can merge.
+
+    Example:
+      data_episode0_s000000 -> episode0_s000000
+    """
+    if not video_id:
+        return video_id
+    if re.match(r"^data_episode.+", video_id):
+        return video_id[len("data_"):]
+    return video_id
+
+
 def _upsert(result: Dict[str, Dict[str, float]], video_id: str, metric_key: str, value: Optional[float]):
     if value is None:
         return
     column = METRIC_KEY_MAP.get(metric_key, metric_key)
-    result.setdefault(video_id, {})[column] = value
+    norm_video_id = _normalize_video_id(video_id)
+    result.setdefault(norm_video_id, {})[column] = value
 
 
 def _ingest_metric_json(path: str, result: Dict[str, Dict[str, float]]):
@@ -216,7 +235,7 @@ def aggregate_results(
             if metric_col in COLUMN_ORDER:
                 row[metric_col] = value
         if jepa_score is not None:
-            row["JEPA_Similarity"] = jepa_score
+            row["JEPA Similarity"] = jepa_score
         csv_rows.append(row)
 
     # Ensure output directory exists

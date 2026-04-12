@@ -9,7 +9,8 @@ This script keeps only the pieces required by the downstream README format:
 Output layout:
   <work_dir>/
     gt_videos/
-    gen_videos/
+    <model_name>_test/        # generated videos for action_following preprocess
+    <model_name>_test_vlm/    # generated videos for run_VLM_judge.sh
     gt_first_frames/
     summary.json
 """
@@ -18,7 +19,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -49,6 +52,7 @@ class PreparedData:
     gt_videos_dir: Path
     gt_first_frames_dir: Path
     gen_videos_dir: Path
+    vlm_videos_dir: Path
     prepared: List[PreparedSample]
 
 
@@ -138,10 +142,13 @@ def split_stitched_video(
     gen_video_out: Path,
     first_frame_out: Path,
     row_mode: str,
+    vlm_video_out: Optional[Path] = None,
 ) -> int:
     ensure_dir(gt_video_out.parent)
     ensure_dir(gen_video_out.parent)
     ensure_dir(first_frame_out.parent)
+    if vlm_video_out is not None:
+        ensure_dir(vlm_video_out.parent)
 
     cap = cv2.VideoCapture(str(src_video))
     if not cap.isOpened():
@@ -166,6 +173,7 @@ def split_stitched_video(
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     gt_writer = cv2.VideoWriter(str(gt_video_out), fourcc, fps, (out_w, out_h))
     gen_writer = cv2.VideoWriter(str(gen_video_out), fourcc, fps, (out_w, out_h))
+    vlm_writer = cv2.VideoWriter(str(vlm_video_out), fourcc, fps, (out_w, out_h)) if vlm_video_out else None
 
     n_frames = 0
     first_saved = False
@@ -183,6 +191,8 @@ def split_stitched_video(
 
         gt_writer.write(gt_frame)
         gen_writer.write(gen_frame)
+        if vlm_writer is not None:
+            vlm_writer.write(gen_frame)
 
         if not first_saved:
             cv2.imwrite(str(first_frame_out), gt_frame)
@@ -192,6 +202,8 @@ def split_stitched_video(
     cap.release()
     gt_writer.release()
     gen_writer.release()
+    if vlm_writer is not None:
+        vlm_writer.release()
 
     if n_frames == 0:
         raise RuntimeError(f"No frames written after split: {src_video}")
@@ -246,8 +258,9 @@ def prepare_results_data(
     gt_videos_dir = resolved_work_dir / "gt_videos"
     gt_first_frames_dir = resolved_work_dir / "gt_first_frames"
     gen_videos_dir = resolved_work_dir / f"{model_name}_test"
+    vlm_videos_dir = resolved_work_dir / f"{model_name}_test_vlm"
 
-    for d in [gt_videos_dir, gt_first_frames_dir, gen_videos_dir]:
+    for d in [gt_videos_dir, gt_first_frames_dir, gen_videos_dir, vlm_videos_dir]:
         ensure_dir(d)
 
     records = load_jsonl(resolved_records_path)
@@ -272,17 +285,26 @@ def prepare_results_data(
 
         gt_video = gt_videos_dir / f"{video_id}.mp4"
         gen_video = gen_videos_dir / build_preprocess_compatible_gen_name(gt_video, video_id)
+        vlm_video = vlm_videos_dir / f"{video_id}.mp4"
         first_frame = gt_first_frames_dir / f"{video_id}.png"
 
-        if force_rebuild or not (gt_video.exists() and gen_video.exists() and first_frame.exists()):
+        need_rebuild = force_rebuild or not (gt_video.exists() and gen_video.exists() and first_frame.exists())
+        if need_rebuild:
             n_frames = split_stitched_video(
                 src_video=input_video,
                 gt_video_out=gt_video,
                 gen_video_out=gen_video,
                 first_frame_out=first_frame,
                 row_mode=row_mode,
+                vlm_video_out=vlm_video,
             )
             log(f"Prepared {input_video.name} -> frames={n_frames}, id={video_id}")
+        elif not vlm_video.exists():
+            # Backfill VLM-friendly filename for existing processed outputs.
+            try:
+                os.link(gen_video, vlm_video)
+            except Exception:
+                shutil.copy2(gen_video, vlm_video)
 
         prompt = str(rec.get("prompt", "")).strip()
         prepared.append(
@@ -320,6 +342,7 @@ def prepare_results_data(
         gt_videos_dir=gt_videos_dir,
         gt_first_frames_dir=gt_first_frames_dir,
         gen_videos_dir=gen_videos_dir,
+        vlm_videos_dir=vlm_videos_dir,
         prepared=prepared,
     )
 

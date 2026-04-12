@@ -22,8 +22,8 @@ data_action_following:
   # - Paths below can use the placeholder `__MODEL_NAME__`.
   gt_path: /data/liuwenhao/WorldArena/video_quality/data_action_following/__MODEL_NAME__/gt_dataset
   val_base: /data/liuwenhao/WorldArena/video_quality/data_action_following/__MODEL_NAME__/generated_dataset
-save_path: /data/liuwenhao/WorldArena/video_quality/__MODEL_NAME__/output
-save_path_action_following: /data/liuwenhao/WorldArena/video_quality/__MODEL_NAME__/output_action_following
+save_path: /data/liuwenhao/WorldArena/video_quality/data/__MODEL_NAME__/output
+save_path_action_following: /data/liuwenhao/WorldArena/video_quality/data/__MODEL_NAME__/output_action_following
 ckpt:
   action_following: /data/liuwenhao/WorldArena/video_quality/models_downloaded/action_following/ViT-B-32.pt
   semantic_alignment:
