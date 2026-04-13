@@ -214,23 +214,23 @@ fi
 
 # Standard metrics
 if [ ${#EVAL_METRICS[@]} -gt 0 ]; then
-    # echo ">>> Running Preprocessing for standard metrics..."
-    # STEP_START_TIME=$(date +%s)
-    # python preprocess_datasets.py --summary_json "$SUMMARY_JSON" --gen_video_dir "$GEN_VIDEO_DIR" --output_base "$DATA_DIR"
-    # STEP_END_TIME=$(date +%s)
-    # echo ">>> Preprocessing finished in $(format_duration $((STEP_END_TIME - STEP_START_TIME)))"
+    echo ">>> Running Preprocessing for standard metrics..."
+    STEP_START_TIME=$(date +%s)
+    python preprocess_datasets.py --summary_json "$SUMMARY_JSON" --gen_video_dir "$GEN_VIDEO_DIR" --output_base "$DATA_DIR"
+    STEP_END_TIME=$(date +%s)
+    echo ">>> Preprocessing finished in $(format_duration $((STEP_END_TIME - STEP_START_TIME)))"
 
-    # echo ">>> Running video resize..."
-    # STEP_START_TIME=$(date +%s)
-    # python ./processing/video_resize.py --config_path "$CONFIG_PATH"
-    # STEP_END_TIME=$(date +%s)
-    # echo ">>> Video resize finished in $(format_duration $((STEP_END_TIME - STEP_START_TIME)))"
+    echo ">>> Running video resize..."
+    STEP_START_TIME=$(date +%s)
+    python ./processing/video_resize.py --config_path "$CONFIG_PATH"
+    STEP_END_TIME=$(date +%s)
+    echo ">>> Video resize finished in $(format_duration $((STEP_END_TIME - STEP_START_TIME)))"
 
-    # echo ">>> Running detection and tracking..."
-    # STEP_START_TIME=$(date +%s)
-    # python ./processing/detection_tracking.py --config_path "$CONFIG_PATH" --detect_gt
-    # STEP_END_TIME=$(date +%s)
-    # echo ">>> Detection & tracking finished in $(format_duration $((STEP_END_TIME - STEP_START_TIME)))"
+    echo ">>> Running detection and tracking..."
+    STEP_START_TIME=$(date +%s)
+    python ./processing/detection_tracking.py --config_path "$CONFIG_PATH" --detect_gt
+    STEP_END_TIME=$(date +%s)
+    echo ">>> Detection & tracking finished in $(format_duration $((STEP_END_TIME - STEP_START_TIME)))"
 
     echo ">>> Starting Standard Evaluation: ${EVAL_METRICS[*]}"
     STEP_START_TIME=$(date +%s)
