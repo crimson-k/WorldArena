@@ -328,6 +328,25 @@ def init_submodules(dimension_list, local=False, **kwargs):
                 'model_path': kwargs.get(f"{dimension}_musiq_ckpt"),
             }
 
+        elif dimension == 'mse':
+            submodules_dict[dimension] = {}
+
+        elif dimension == 'lpips':
+            submodules_dict[dimension] = {
+                'alexnet': kwargs.get("lpips_alexnet_ckpt"),
+            }
+
+        elif dimension == 'fid':
+            submodules_dict[dimension] = {
+                'inception': kwargs.get("fid_inception_ckpt"),
+            }
+
+        elif dimension == 'fvd':
+            submodules_dict[dimension] = {
+                'i3d': kwargs.get("fvd_i3d_ckpt"),
+                'chunk_size': kwargs.get("fvd_chunk_size", 16),
+            }
+
         elif dimension == 'semantic_alignment':
             submodules_dict[dimension] = {
                 'caption_model': kwargs.get(f"{dimension}_caption_model_ckpt", None),

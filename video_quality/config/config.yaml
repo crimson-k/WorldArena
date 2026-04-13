@@ -47,6 +47,13 @@ ckpt:
     model: /data/liuwenhao/WorldArena/video_quality/models_downloaded/motion_smoothness/VFIMamba.pkl
   image_quality:
     musiq: /data/liuwenhao/WorldArena/video_quality/models_downloaded/image_quality/musiq_spaq_ckpt-358bb6af.pth
+  lpips:
+    alexnet: /data/liuwenhao/WorldArena/video_quality/models_downloaded/alexnet-owt-7be5be79.pth
+  fid:
+    inception: /data/liuwenhao/WorldArena/video_quality/models_downloaded/pt_inception-2015-12-05-6726825d.pth
+  fvd:
+    i3d: /data/liuwenhao/WorldArena/video_quality/models_downloaded/i3d_torchscript.pt
+    chunk_size: 16
   subject_consistency:
     repo: /data/liuwenhao/WorldArena/video_quality/models_downloaded/subject_consistency/facebookresearch_dino_main
     weight: /data/liuwenhao/WorldArena/video_quality/models_downloaded/subject_consistency/dino_vitbase16_pretrain.pth
@@ -77,6 +84,13 @@ ckpt:
 #     - `model`: https://huggingface.co/MCG-NJU/VFIMamba/blob/main/model.pkl
 # - `image_quality`:
 #     - `musiq`: https://huggingface.co/chaofengc/IQA-PyTorch-Weights/blob/main/musiq_spaq_ckpt-358bb6af.pth
+# - `lpips`:
+#     - `alexnet`: https://download.pytorch.org/models/alexnet-owt-7be5be79.pth
+# - `fid`:
+#     - `inception`: https://github.com/mseitzer/pytorch-fid/releases/download/fid_weights/pt_inception-2015-12-05-6726825d.pth
+# - `fvd`:
+#     - `i3d`: use a torchscript I3D checkpoint compatible with call signature
+#       `model(x, rescale=False, resize=False, return_features=True)`.
 # - `subject_consistency`:
 #     - `repo`: https://github.com/facebookresearch/dino
 #     - `weight`: https://huggingface.co/Xiaomabufei/lumos/blob/main/dino_vitbase16_pretrain.pth

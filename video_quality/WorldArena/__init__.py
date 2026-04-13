@@ -27,6 +27,12 @@ from .subject_consistency import compute_subject_consistency
 from .flow_score import compute_flow_score
 from .flow_aepe_metrics import compute_photometric_smoothness
 from .motion_smoothness_metrics import compute_motion_smoothness
+from .reconstruction_distribution_metrics import (
+    compute_fid,
+    compute_fvd,
+    compute_lpips,
+    compute_mse,
+)
 
 import re
 import time
@@ -153,7 +159,11 @@ class WorldArenaBenchmark(object):
             'photometric_smoothness',
             'motion_smoothness',
             'image_quality',
-            'subject_consistency'
+            'subject_consistency',
+            'mse',
+            'lpips',
+            'fid',
+            'fvd',
         ]        
 
 
@@ -350,6 +360,30 @@ class WorldArenaBenchmark(object):
                         gt_path=gt_path, pd_path=data_base, metric_names=["ssim"]
                     )
 
+                elif dimension == 'mse':
+                    submodules_list = submodules_dict[dimension]
+                    results = compute_mse(
+                        cur_full_info_path, submodules_list, gt_path=cur_gt_path
+                    )
+
+                elif dimension == 'lpips':
+                    submodules_list = submodules_dict[dimension]
+                    results = compute_lpips(
+                        cur_full_info_path, submodules_list, gt_path=cur_gt_path, **kwargs
+                    )
+
+                elif dimension == 'fid':
+                    submodules_list = submodules_dict[dimension]
+                    results = compute_fid(
+                        cur_full_info_path, submodules_list, gt_path=cur_gt_path, **kwargs
+                    )
+
+                elif dimension == 'fvd':
+                    submodules_list = submodules_dict[dimension]
+                    results = compute_fvd(
+                        cur_full_info_path, submodules_list, gt_path=cur_gt_path, **kwargs
+                    )
+
                 elif dimension == 'depth_accuracy':
                     submodules_list = submodules_dict[dimension]
                     results = compute_depth_accuracy(
@@ -425,7 +459,6 @@ class WorldArenaBenchmark(object):
 
             with open(json_path, "r") as f:
                 results_dict = json.load(f)
-
 
 
 

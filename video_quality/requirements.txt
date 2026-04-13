@@ -13,6 +13,8 @@ accelerate==1.1.0
 sentencepiece==0.2.1
 
 openai-clip==1.0.1
+lpips==0.1.4
+pytorch-fid==0.3.0
 
 decord==0.6.0
 av==13.1.0
