@@ -318,7 +318,7 @@ def main() -> None:
 
     merged_rows.sort(key=lambda r: (_safe_float(r.get("EWMScore")) or -1e18), reverse=True)
 
-    write_csv(output_csv, merged_rows, LEADERBOARD_COLUMNS)
+    write_csv(output_csv, merged_rows, MARKDOWN_COLUMNS)
     write_markdown_with_max_tags(
         output_md,
         merged_rows,
