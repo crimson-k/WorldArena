@@ -234,7 +234,14 @@ if [ ${#EVAL_METRICS[@]} -gt 0 ]; then
 
     echo ">>> Starting Standard Evaluation: ${EVAL_METRICS[*]}"
     STEP_START_TIME=$(date +%s)
-    python evaluate.py --dimension ${EVAL_METRICS[@]} --config "$CONFIG_PATH" --overwrite
+    EVAL_ARGS=(--dimension "${EVAL_METRICS[@]}" --config "$CONFIG_PATH")
+    if [ "${WORLD_ARENA_OVERWRITE_RESULTS:-0}" = "1" ]; then
+        EVAL_ARGS+=(--overwrite)
+        echo ">>> Evaluation mode: overwrite (WORLD_ARENA_OVERWRITE_RESULTS=1)"
+    else
+        echo ">>> Evaluation mode: incremental merge (existing metrics are kept)"
+    fi
+    python evaluate.py "${EVAL_ARGS[@]}"
     STEP_END_TIME=$(date +%s)
     echo ">>> Standard evaluation finished in $(format_duration $((STEP_END_TIME - STEP_START_TIME)))"
 fi

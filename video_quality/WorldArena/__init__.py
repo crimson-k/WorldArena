@@ -236,230 +236,250 @@ class WorldArenaBenchmark(object):
 
         json_path = os.path.join(self.output_path, f"{data_name}_results.json")
 
-        if overwrite and os.path.exists(json_path):
-            print0(f"[overwrite] Removing existing results at {json_path}")
-            try:
-                os.remove(json_path)
-            except OSError as exc:
-                print0(f"[overwrite] Warning: failed to remove {json_path}: {exc}")
+        if dimension_list is None:
+            dimension_list = self.build_full_dimension_list()
 
-        if (not os.path.exists(json_path)) or overwrite:
+        if "psnr" in dimension_list and "ssim" in dimension_list:
+            dimension_list = [d for d in dimension_list if d not in ("psnr", "ssim")]
+            dimension_list.append("psnr_ssim")
 
-            results_dict = {}
-            timing_dict = {}
+        results_dict = {}
+        existing_timing = {}
+        if os.path.exists(json_path) and not overwrite:
+            with open(json_path, "r") as f:
+                loaded = json.load(f)
+            if isinstance(loaded, dict):
+                results_dict = loaded
+                maybe_timing = results_dict.pop("_timing_seconds", {})
+                if isinstance(maybe_timing, dict):
+                    existing_timing = maybe_timing
+            print0(f"[incremental] Loaded existing results from {json_path}")
+        elif overwrite and os.path.exists(json_path):
+            print0(f"[overwrite] Existing results at {json_path} will be recomputed")
+
+        dimensions_to_eval = []
+        for dim in dimension_list:
+            if overwrite:
+                dimensions_to_eval.append(dim)
+                continue
+            if dim == "psnr_ssim":
+                if ("psnr" in results_dict) and ("ssim" in results_dict):
+                    print0("[incremental] Skip psnr_ssim (psnr and ssim already exist)")
+                    continue
+                dimensions_to_eval.append(dim)
+                continue
+            if dim in results_dict:
+                print0(f"[incremental] Skip {dim} (already exists)")
+                continue
+            dimensions_to_eval.append(dim)
+
+        if not dimensions_to_eval:
+            print0("[incremental] No new metrics to evaluate. Keep existing results.")
+            results_dict["_timing_seconds"] = existing_timing
+            with open(json_path, "w") as f:
+                json.dump(results_dict, f, indent=2)
+            return
+
+        timing_dict = {}
+        print(dimensions_to_eval)
+        submodules_dict = init_submodules(dimensions_to_eval, local=local, **kwargs)
+
+        for dimension in dimensions_to_eval:
             
-            if dimension_list is None:
-                dimension_list = self.build_full_dimension_list()
+            print0(f"Evaluating: {dimension}")
+            dim_start_time = time.perf_counter()
 
-            if "psnr" in dimension_list and "ssim" in dimension_list:
-                dimension_list.pop(dimension_list.index("psnr"))
-                dimension_list.pop(dimension_list.index("ssim"))
-                dimension_list.append("psnr_ssim")
+            # choose dataset roots per dimension (action_following can use dedicated roots)
+            if dimension == 'action_following':
+                cur_data_base = data_base_action or data_base
+                cur_gt_path = gt_path_action or gt_path
+                cur_data_name = f"{data_name}_action_following"
 
-            print(dimension_list)
-
-            submodules_dict = init_submodules(dimension_list, local=local, **kwargs)
-
-            for dimension in dimension_list:
-                
-                print0(f"Evaluating: {dimension}")
-                dim_start_time = time.perf_counter()
-
-                # choose dataset roots per dimension (action_following can use dedicated roots)
-                if dimension == 'action_following':
-                    cur_data_base = data_base_action or data_base
-                    cur_gt_path = gt_path_action or gt_path
-                    cur_data_name = f"{data_name}_action_following"
-
-                    if not cur_data_base:
-                        raise ValueError("action_following requires data_action_following.val_base in config.yaml")
-                    if not os.path.exists(cur_data_base):
-                        raise FileNotFoundError(
-                            f"action_following data base not found: {cur_data_base}. "
-                            "Please run preprocess_datasets_diversity with output_base matching this path."
-                        )
-                    if not cur_gt_path:
-                        raise ValueError("action_following requires data_action_following.gt_path in config.yaml")
-                    if not os.path.exists(cur_gt_path):
-                        raise FileNotFoundError(
-                            f"action_following gt path not found: {cur_gt_path}. "
-                            "Please generate gt_dataset_action_following accordingly."
-                        )
-                else:
-                    cur_data_base = data_base
-                    cur_gt_path = gt_path
-                    cur_data_name = data_name
-
-                # build per-dimension full info to honor per-metric data roots
-                cur_full_info_path = self.build_full_info_json(cur_data_base, cur_data_name, [dimension], **kwargs)
-
-                if dimension == 'trajectory_accuracy':
-                    results = compute_trajectory_accuracy(
-                        gt_path=cur_gt_path, data_base=cur_data_base
+                if not cur_data_base:
+                    raise ValueError("action_following requires data_action_following.val_base in config.yaml")
+                if not os.path.exists(cur_data_base):
+                    raise FileNotFoundError(
+                        f"action_following data base not found: {cur_data_base}. "
+                        "Please run preprocess_datasets_diversity with output_base matching this path."
                     )
+                if not cur_gt_path:
+                    raise ValueError("action_following requires data_action_following.gt_path in config.yaml")
+                if not os.path.exists(cur_gt_path):
+                    raise FileNotFoundError(
+                        f"action_following gt path not found: {cur_gt_path}. "
+                        "Please generate gt_dataset_action_following accordingly."
+                    )
+            else:
+                cur_data_base = data_base
+                cur_gt_path = gt_path
+                cur_data_name = data_name
 
-                elif dimension == 'semantic_alignment':  
-                    submodules_list = submodules_dict[dimension] 
-                    caption_model = submodules_list['caption_model'] 
-                    semantics_model = submodules_list['clip_model'] 
-                    caption = caption_reference(
-                                        model_name=data_name,
+            # build per-dimension full info to honor per-metric data roots
+            cur_full_info_path = self.build_full_info_json(cur_data_base, cur_data_name, [dimension], **kwargs)
+
+            if dimension == 'trajectory_accuracy':
+                results = compute_trajectory_accuracy(
+                    gt_path=cur_gt_path, data_base=cur_data_base
+                )
+
+            elif dimension == 'semantic_alignment':  
+                submodules_list = submodules_dict[dimension] 
+                caption_model = submodules_list['caption_model'] 
+                semantics_model = submodules_list['clip_model'] 
+                caption = caption_reference(
+                                    model_name=data_name,
+                                    model_path = caption_model,
+                                    video_folder_root = cur_full_info_path,
+                                    save_path = self.output_path,
+                                    **kwargs
+                                    )
+                caption_json = os.path.join(self.output_path, f"{data_name}_caption_responses.json")
+                with open(caption_json, 'r') as f:
+                    data = json.load(f)
+
+                result = {}
+                for sample_id, info in data.items():
+                    if "Overall_Constraints" in info:
+                        result[sample_id] = info["Overall_Constraints"]
+                    else:
+                        print(f"Warning: No 'Overall_Constraints' found in {sample_id}")
+                results_dict['logics'] = result
+
+                gt_caption_json = os.path.join(self.output_path, f"gt_caption_responses.json")
+                if not os.path.isfile(gt_caption_json):
+                    gt_full_info_path = self.build_full_gt_info_json(gt_path, 'gt', **kwargs)
+                    gt_caption = caption_reference(
+                                        model_name='gt',
                                         model_path = caption_model,
-                                        video_folder_root = cur_full_info_path,
+                                        video_folder_root = gt_full_info_path,
                                         save_path = self.output_path,
                                         **kwargs
-                                        )
-                    caption_json = os.path.join(self.output_path, f"{data_name}_caption_responses.json")
-                    with open(caption_json, 'r') as f:
-                        data = json.load(f)
-
-                    result = {}
-                    for sample_id, info in data.items():
-                        if "Overall_Constraints" in info:
-                            result[sample_id] = info["Overall_Constraints"]
-                        else:
-                            print(f"Warning: No 'Overall_Constraints' found in {sample_id}")
-                    results_dict['logics'] = result
-
-                    gt_caption_json = os.path.join(self.output_path, f"gt_caption_responses.json")
-                    if not os.path.isfile(gt_caption_json):
-                        gt_full_info_path = self.build_full_gt_info_json(gt_path, 'gt', **kwargs)
-                        gt_caption = caption_reference(
-                                            model_name='gt',
-                                            model_path = caption_model,
-                                            video_folder_root = gt_full_info_path,
-                                            save_path = self.output_path,
-                                            **kwargs
-                                            )                                                                     
-                    
-                    
-                    results = compute_semantic_alignment(caption_json, gt_caption_json, semantics_model)
+                                        )                                                                     
                 
                 
-                elif dimension == 'action_following':
-
-                    submodules_list = submodules_dict[dimension]
-
-                    results = compute_action_following(cur_full_info_path, submodules_list, **kwargs)
-
-                elif dimension == 'psnr_ssim':
-                    
-                    results = compute_basic_metrics(
-                        gt_path=gt_path, pd_path=data_base, metric_names=["psnr", "ssim"]
-                    )
-                
-                elif dimension == 'psnr':
-                    
-                    results = compute_basic_metrics(
-                        gt_path=gt_path, pd_path=data_base, metric_names=["psnr"]
-                    )
-
-                elif dimension == 'ssim':
-        
-                    results = compute_basic_metrics(
-                        gt_path=gt_path, pd_path=data_base, metric_names=["ssim"]
-                    )
-
-                elif dimension == 'mse':
-                    submodules_list = submodules_dict[dimension]
-                    results = compute_mse(
-                        cur_full_info_path, submodules_list, gt_path=cur_gt_path
-                    )
-
-                elif dimension == 'lpips':
-                    submodules_list = submodules_dict[dimension]
-                    results = compute_lpips(
-                        cur_full_info_path, submodules_list, gt_path=cur_gt_path, **kwargs
-                    )
-
-                elif dimension == 'fid':
-                    submodules_list = submodules_dict[dimension]
-                    results = compute_fid(
-                        cur_full_info_path, submodules_list, gt_path=cur_gt_path, **kwargs
-                    )
-
-                elif dimension == 'fvd':
-                    submodules_list = submodules_dict[dimension]
-                    results = compute_fvd(
-                        cur_full_info_path, submodules_list, gt_path=cur_gt_path, **kwargs
-                    )
-
-                elif dimension == 'depth_accuracy':
-                    submodules_list = submodules_dict[dimension]
-                    results = compute_depth_accuracy(
-                        cur_full_info_path, submodules_list, gt_path=cur_gt_path
-                    )
-                elif dimension == 'aesthetic_quality':
-                    submodules_list = submodules_dict[dimension]
-                    results = compute_aesthetic_quality(
-                        cur_full_info_path, submodules_list, **kwargs
-                    )
-                elif dimension == 'background_consistency':
-                    submodules_list = submodules_dict[dimension]
-                    results = compute_background_consistency(
-                        cur_full_info_path, submodules_list, **kwargs
-                    )
-                elif dimension == 'dynamic_degree':
-                    submodules_list = submodules_dict[dimension]
-                    results = compute_dynamic_degree(
-                        cur_full_info_path, submodules_list, **kwargs
-                    )
-                elif dimension == 'image_quality':
-                    submodules_list = submodules_dict[dimension]
-                    results = compute_imaging_quality(
-                        cur_full_info_path, submodules_list, **kwargs
-                    )
-                elif dimension == 'subject_consistency':
-                    submodules_list = submodules_dict[dimension]
-                    results = compute_subject_consistency(
-                        cur_full_info_path, submodules_list, **kwargs
-                    )
-                elif dimension == 'flow_score':
-                    submodules_list = submodules_dict[dimension]
-                    results = compute_flow_score(
-                        cur_full_info_path, submodules_list, **kwargs
-                    )
-
-                elif dimension == 'photometric_smoothness':
-                    submodules_list = submodules_dict[dimension]
-                    results = compute_photometric_smoothness(
-                        cur_full_info_path, submodules_list, **kwargs
-                    )
-
-                elif dimension == 'motion_smoothness':
-                    submodules_list = submodules_dict[dimension]
-                    results = compute_motion_smoothness(
-                        cur_full_info_path, submodules_list, **kwargs
-                    )
-                    
-                else:
-                    raise ValueError(f"[Error] Unsupported evaluation dimension: {dimension}")
-
-                # Standardize structure and attach normalized per-video scores
-                results = _to_standard_results(dimension, results, data_base)
-                results = _add_normalized_scores(dimension, results)
-                dim_elapsed = time.perf_counter() - dim_start_time
-                timing_dict[dimension] = round(dim_elapsed, 4)
-                print0(f"Finished {dimension} in {dim_elapsed:.2f}s")
-
-                if dimension == "psnr_ssim":
-                    results_dict["psnr"] = results["psnr"]
-                    results_dict["ssim"] = results["ssim"]
-                else:
-                    results_dict[dimension] = results
-
-            results_dict["_timing_seconds"] = timing_dict
+                results = compute_semantic_alignment(caption_json, gt_caption_json, semantics_model)
             
+            
+            elif dimension == 'action_following':
 
-            results_json = os.path.join(self.output_path,f'{data_name}_results.json')    
-            with open(results_json, "w") as f:
-                json.dump(results_dict, f, indent=2)
+                submodules_list = submodules_dict[dimension]
 
-        else:
+                results = compute_action_following(cur_full_info_path, submodules_list, **kwargs)
 
-            with open(json_path, "r") as f:
-                results_dict = json.load(f)
+            elif dimension == 'psnr_ssim':
+                
+                results = compute_basic_metrics(
+                    gt_path=gt_path, pd_path=data_base, metric_names=["psnr", "ssim"]
+                )
+            
+            elif dimension == 'psnr':
+                
+                results = compute_basic_metrics(
+                    gt_path=gt_path, pd_path=data_base, metric_names=["psnr"]
+                )
 
+            elif dimension == 'ssim':
+    
+                results = compute_basic_metrics(
+                    gt_path=gt_path, pd_path=data_base, metric_names=["ssim"]
+                )
+
+            elif dimension == 'mse':
+                submodules_list = submodules_dict[dimension]
+                results = compute_mse(
+                    cur_full_info_path, submodules_list, gt_path=cur_gt_path
+                )
+
+            elif dimension == 'lpips':
+                submodules_list = submodules_dict[dimension]
+                results = compute_lpips(
+                    cur_full_info_path, submodules_list, gt_path=cur_gt_path, **kwargs
+                )
+
+            elif dimension == 'fid':
+                submodules_list = submodules_dict[dimension]
+                results = compute_fid(
+                    cur_full_info_path, submodules_list, gt_path=cur_gt_path, **kwargs
+                )
+
+            elif dimension == 'fvd':
+                submodules_list = submodules_dict[dimension]
+                results = compute_fvd(
+                    cur_full_info_path, submodules_list, gt_path=cur_gt_path, **kwargs
+                )
+
+            elif dimension == 'depth_accuracy':
+                submodules_list = submodules_dict[dimension]
+                results = compute_depth_accuracy(
+                    cur_full_info_path, submodules_list, gt_path=cur_gt_path
+                )
+            elif dimension == 'aesthetic_quality':
+                submodules_list = submodules_dict[dimension]
+                results = compute_aesthetic_quality(
+                    cur_full_info_path, submodules_list, **kwargs
+                )
+            elif dimension == 'background_consistency':
+                submodules_list = submodules_dict[dimension]
+                results = compute_background_consistency(
+                    cur_full_info_path, submodules_list, **kwargs
+                )
+            elif dimension == 'dynamic_degree':
+                submodules_list = submodules_dict[dimension]
+                results = compute_dynamic_degree(
+                    cur_full_info_path, submodules_list, **kwargs
+                )
+            elif dimension == 'image_quality':
+                submodules_list = submodules_dict[dimension]
+                results = compute_imaging_quality(
+                    cur_full_info_path, submodules_list, **kwargs
+                )
+            elif dimension == 'subject_consistency':
+                submodules_list = submodules_dict[dimension]
+                results = compute_subject_consistency(
+                    cur_full_info_path, submodules_list, **kwargs
+                )
+            elif dimension == 'flow_score':
+                submodules_list = submodules_dict[dimension]
+                results = compute_flow_score(
+                    cur_full_info_path, submodules_list, **kwargs
+                )
+
+            elif dimension == 'photometric_smoothness':
+                submodules_list = submodules_dict[dimension]
+                results = compute_photometric_smoothness(
+                    cur_full_info_path, submodules_list, **kwargs
+                )
+
+            elif dimension == 'motion_smoothness':
+                submodules_list = submodules_dict[dimension]
+                results = compute_motion_smoothness(
+                    cur_full_info_path, submodules_list, **kwargs
+                )
+                
+            else:
+                raise ValueError(f"[Error] Unsupported evaluation dimension: {dimension}")
+
+            # Standardize structure and attach normalized per-video scores
+            results = _to_standard_results(dimension, results, data_base)
+            results = _add_normalized_scores(dimension, results)
+            dim_elapsed = time.perf_counter() - dim_start_time
+            timing_dict[dimension] = round(dim_elapsed, 4)
+            print0(f"Finished {dimension} in {dim_elapsed:.2f}s")
+
+            if dimension == "psnr_ssim":
+                results_dict["psnr"] = results["psnr"]
+                results_dict["ssim"] = results["ssim"]
+            else:
+                results_dict[dimension] = results
+
+        merged_timing = {}
+        merged_timing.update(existing_timing)
+        merged_timing.update(timing_dict)
+        results_dict["_timing_seconds"] = merged_timing
+
+        results_json = os.path.join(self.output_path,f'{data_name}_results.json')    
+        with open(results_json, "w") as f:
+            json.dump(results_dict, f, indent=2)
 
 
 
