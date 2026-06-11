@@ -16,6 +16,14 @@ import torchvision.transforms.functional as TF
 # JEDi
 from videojedi import JEDiMetric
 
+import torch.distributed as dist
+
+
+def reset_torch_distributed_if_needed():
+    if dist.is_available() and dist.is_initialized():
+        print("[WARN] torch.distributed process group already initialized; destroying it before JEDi init.")
+        dist.destroy_process_group()
+
 
 def list_mp4_stems(folder: Path):
     """Return {stem: path} for mp4 files in folder (non-recursive)."""
@@ -37,16 +45,43 @@ def intersect_pairs(real_dir: Path, gen_dir: Path):
     real_map = list_mp4_stems(real_dir)
     gen_map = list_mp4_stems(gen_dir)
     common = sorted(set(real_map.keys()) & set(gen_map.keys()))
+    
     filtered = []
-    for k in common:
-        rp = real_map[k]
-        gp = gen_map[k]
+    real_paths = []
+    gen_paths = []
+    
+    # 优先尝试按同名匹配（兼容旧跑法）
+    if len(common) > 0:
+        for k in common:
+            rp = real_map[k]
+            gp = gen_map[k]
+            if is_valid_mp4(rp) and is_valid_mp4(gp):
+                filtered.append(k)
+            else:
+                print(f"[WARN] skip invalid pair: {k}")
+        real_paths = [real_map[k] for k in filtered]
+        gen_paths = [gen_map[k] for k in filtered]
+        return filtered, real_paths, gen_paths
+
+    # 如果完全没有同名文件，则回退到按顺序匹配（满足你当前的新需求）
+    print("[WARN] No same-name mp4s found. Falling back to ordered index matching.")
+    real_keys = sorted(list(real_map.keys()))
+    gen_keys = sorted(list(gen_map.keys()))
+    
+    min_len = min(len(real_keys), len(gen_keys))
+    for i in range(min_len):
+        rk = real_keys[i]
+        gk = gen_keys[i]
+        rp = real_map[rk]
+        gp = gen_map[gk]
+        
         if is_valid_mp4(rp) and is_valid_mp4(gp):
-            filtered.append(k)
+            filtered.append(gk)
+            real_paths.append(rp)
+            gen_paths.append(gp)
         else:
-            print(f"[WARN] skip invalid pair: {k}")
-    real_paths = [real_map[k] for k in filtered]
-    gen_paths = [gen_map[k] for k in filtered]
+            print(f"[WARN] skip invalid pair at index {i}: real={rk}, gen={gk}")
+            
     return filtered, real_paths, gen_paths
 
 
@@ -174,6 +209,9 @@ def main():
     # Pass local model/config explicitly to avoid unexpected online fetch.
     feature_cache_dir = Path(args.output_root) / "features_cache"
     feature_cache_dir.mkdir(parents=True, exist_ok=True)
+
+    reset_torch_distributed_if_needed()
+
     jedi = JEDiMetric(
         feature_path=str(feature_cache_dir),
         model_dir=args.model_dir,
@@ -202,6 +240,9 @@ def main():
         print(f"[INFO] Saved JEDi score json -> {out_json}")
     except Exception as e:
         print(f"[WARN] Failed to save JEDi score json: {e}")
+
+    if dist.is_available() and dist.is_initialized():
+        dist.destroy_process_group()
 
 
 if __name__ == "__main__":

@@ -24,7 +24,8 @@ pip install --no-build-isolation mmcv==2.2.0
 pip install -r video_quality/requirements.txt
 pip install ipython
 pip install ninja
-pip install mamba-ssm
+# 5) 再装 mamba-ssm，关键是这个参数
+pip install mamba-ssm --no-build-isolation
 pip install transformers==4.51.3
 # Optional: pip install jupyter notebook jupyterlab
 ```

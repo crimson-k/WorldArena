@@ -13,6 +13,7 @@ RAW_METRICS=${4:-}
 CONFIG_PATH="./config/config.yaml"
 SHARD_INDEX=""
 NUM_SHARDS=""
+
 if [ $# -ge 5 ]; then
     if [[ "${5}" =~ ^[0-9]+$ ]]; then
         SHARD_INDEX="${5}"
@@ -23,25 +24,17 @@ if [ $# -ge 5 ]; then
         NUM_SHARDS=${7:-}
     fi
 fi
+
 if [ -z "$MODEL_NAME" ] || [ -z "$GEN_VIDEO_DIR" ] || [ -z "$SUMMARY_JSON" ] || [ -z "$RAW_METRICS" ]; then
     echo "Usage: $0 <MODEL_NAME> <GEN_VIDEO_DIR> <SUMMARY_JSON> <METRIC_LIST> [CONFIG_PATH] [SHARD_INDEX] [NUM_SHARDS]"
     echo "   or: $0 <MODEL_NAME> <GEN_VIDEO_DIR> <SUMMARY_JSON> <METRIC_LIST> [SHARD_INDEX] [NUM_SHARDS]"
     exit 1
 fi
 
-SCRIPT_START_TIME=$(date +%s)
 TEMP_CONFIG_PATH=""
 EFFECTIVE_MODEL_NAME="$MODEL_NAME"
 SHARD_TAG=""
 PROJECT_ROOT=$(cd -- "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-
-format_duration() {
-    local total_seconds=$1
-    local hours=$((total_seconds / 3600))
-    local minutes=$(((total_seconds % 3600) / 60))
-    local seconds=$((total_seconds % 60))
-    printf "%02d:%02d:%02d" "$hours" "$minutes" "$seconds"
-}
 
 is_non_negative_int() {
     [[ "$1" =~ ^[0-9]+$ ]]
@@ -167,10 +160,8 @@ if [ ! -f "$CONFIG_PATH" ]; then
     exit 1
 fi
 
-# Activate environment
-source $(conda info --base)/etc/profile.d/conda.sh
-conda activate WorldArena
-export PATH="your absolute path:$PATH"
+source /share/apps/miniconda3/etc/profile.d/conda.sh
+conda activate WorldArena_test
 
 # Parse metrics
 CLEAN_METRICS=$(echo "$RAW_METRICS" | tr ',' ' ' | tr '"' ' ')
@@ -188,6 +179,7 @@ mkdir -p "$DATA_DIR" "$CONFIG_DIR" "$OUTPUT_DIR" "$OUTPUT_DIR_ACTION"
 TEMP_CONFIG_PATH=$(render_config_for_model "$CONFIG_PATH" "$EFFECTIVE_MODEL_NAME")
 CONFIG_PATH="$TEMP_CONFIG_PATH"
 normalize_config_legacy_root "$CONFIG_PATH"
+
 echo ">>> Base model: $MODEL_NAME"
 echo ">>> Effective model for this run: $EFFECTIVE_MODEL_NAME"
 if [ -n "$SHARD_TAG" ]; then
@@ -215,25 +207,15 @@ fi
 # Standard metrics
 if [ ${#EVAL_METRICS[@]} -gt 0 ]; then
     echo ">>> Running Preprocessing for standard metrics..."
-    STEP_START_TIME=$(date +%s)
     python preprocess_datasets.py --summary_json "$SUMMARY_JSON" --gen_video_dir "$GEN_VIDEO_DIR" --output_base "$DATA_DIR"
-    STEP_END_TIME=$(date +%s)
-    echo ">>> Preprocessing finished in $(format_duration $((STEP_END_TIME - STEP_START_TIME)))"
 
     echo ">>> Running video resize..."
-    STEP_START_TIME=$(date +%s)
     python ./processing/video_resize.py --config_path "$CONFIG_PATH"
-    STEP_END_TIME=$(date +%s)
-    echo ">>> Video resize finished in $(format_duration $((STEP_END_TIME - STEP_START_TIME)))"
 
     echo ">>> Running detection and tracking..."
-    STEP_START_TIME=$(date +%s)
     python ./processing/detection_tracking.py --config_path "$CONFIG_PATH" --detect_gt
-    STEP_END_TIME=$(date +%s)
-    echo ">>> Detection & tracking finished in $(format_duration $((STEP_END_TIME - STEP_START_TIME)))"
 
     echo ">>> Starting Standard Evaluation: ${EVAL_METRICS[*]}"
-    STEP_START_TIME=$(date +%s)
     EVAL_ARGS=(--dimension "${EVAL_METRICS[@]}" --config "$CONFIG_PATH")
     if [ "${WORLD_ARENA_OVERWRITE_RESULTS:-0}" = "1" ]; then
         EVAL_ARGS+=(--overwrite)
@@ -242,10 +224,6 @@ if [ ${#EVAL_METRICS[@]} -gt 0 ]; then
         echo ">>> Evaluation mode: incremental merge (existing metrics are kept)"
     fi
     python evaluate.py "${EVAL_ARGS[@]}"
-    STEP_END_TIME=$(date +%s)
-    echo ">>> Standard evaluation finished in $(format_duration $((STEP_END_TIME - STEP_START_TIME)))"
 fi
 
-SCRIPT_END_TIME=$(date +%s)
-echo ">>> Total elapsed time: $(format_duration $((SCRIPT_END_TIME - SCRIPT_START_TIME)))"
 echo ">>> ✅ All evaluations finished"

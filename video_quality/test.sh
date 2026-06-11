@@ -1,0 +1,8 @@
+MODEL_NAME=runid_4_robotwin_aloha_random_500_clean_50_multi_node_2_20260415_175300_step_40000_480p_w_formal
+BASE_DIR=/ssdfs/datahome/usersht/dev/lwh/WorldArena/video_quality/data/runid_4_robotwin_aloha_random_500_clean_50_multi_node_2_20260415_175300_step_40000_480p_w_formal
+GEN_VIDEO_DIR=$BASE_DIR/runid_4_robotwin_aloha_random_500_clean_50_multi_node_2_20260415_175300_step_40000_480p_w_test
+SUMMARY_JSON=$BASE_DIR/summary.json
+CONFIG_PATH=/ssdfs/datahome/usersht/dev/lwh/WorldArena/video_quality/config/config.yaml
+
+cd /ssdfs/datahome/usersht/dev/lwh/WorldArena/video_quality
+bash run_action_following.sh "$MODEL_NAME" "$GEN_VIDEO_DIR" "$SUMMARY_JSON" "$CONFIG_PATH"

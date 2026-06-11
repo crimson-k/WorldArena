@@ -64,6 +64,37 @@ MARKDOWN_COLUMNS: List[str] = [
     "Controllability",
 ] + sorted(BASE_METRICS)
 
+# Explicit order for the 16 fine-grained metrics.
+ORDERED16_COLUMNS: List[str] = [
+    "Model",
+    "open_source",
+    "year",
+    "EWMScore",
+    "Visual Quality",
+    "Motion Quality",
+    "Content Consistency",
+    "Physics Adherence",
+    "3D Accuracy",
+    "Controllability",
+] + [
+    "Image Quality",
+    "Aesthetic Quality",
+    "JEPA Similarity",
+    "Dynamic Degree",
+    "Flow Score",
+    "Motion Smoothness",
+    "Subject Consistency",
+    "Background Consistency",
+    "Photometric Consistency",
+    "Interaction Quality",
+    "Trajectory Accuracy",
+    "Depth Accuracy",
+    "Perspectivity",
+    "Instruction Following",
+    "Semantic Alignment",
+    "Action Following",
+]
+
 
 @dataclass
 class LoadResult:
@@ -289,6 +320,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--action_following_default", type=float, default=0.0, help="Fallback for missing 'Action Following'.")
     parser.add_argument("--output_csv", default="/data/liuwenhao/WorldArena/worldarena_leaderboard_with_my_model.csv", help="Merged numeric leaderboard CSV output.")
     parser.add_argument("--output_md", default="/data/liuwenhao/WorldArena/worldarena_leaderboard_with_my_model.md", help="Markdown table with MAX tags.")
+    parser.add_argument(
+        "--output_csv_ordered16",
+        default="/data/liuwenhao/WorldArena/worldarena_leaderboard_with_my_model_ordered16.csv",
+        help="Second merged numeric leaderboard CSV output with 16 fine-grained metrics in fixed order.",
+    )
+    parser.add_argument(
+        "--output_md_ordered16",
+        default="/data/liuwenhao/WorldArena/worldarena_leaderboard_with_my_model_ordered16.md",
+        help="Second markdown leaderboard output with 16 fine-grained metrics in fixed order.",
+    )
     return parser.parse_args()
 
 
@@ -299,6 +340,8 @@ def main() -> None:
     leaderboard_csv = Path(args.leaderboard_csv).resolve()
     output_csv = Path(args.output_csv).resolve()
     output_md = Path(args.output_md).resolve()
+    output_csv_ordered16 = Path(args.output_csv_ordered16).resolve()
+    output_md_ordered16 = Path(args.output_md_ordered16).resolve()
 
     model_metrics = load_model_metrics_from_aggregated_csv(
         aggregated_csv=aggregated_csv,
@@ -325,9 +368,18 @@ def main() -> None:
         MARKDOWN_COLUMNS,
         mark_columns=ALL_SCORE_COLUMNS,
     )
+    write_csv(output_csv_ordered16, merged_rows, ORDERED16_COLUMNS)
+    write_markdown_with_max_tags(
+        output_md_ordered16,
+        merged_rows,
+        ORDERED16_COLUMNS,
+        mark_columns=ALL_SCORE_COLUMNS,
+    )
 
     print(f"[OK] output_csv={output_csv}")
     print(f"[OK] output_md={output_md}")
+    print(f"[OK] output_csv_ordered16={output_csv_ordered16}")
+    print(f"[OK] output_md_ordered16={output_md_ordered16}")
     for w in model_metrics.warnings:
         print(f"[INFO] {w}")
 
