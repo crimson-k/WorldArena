@@ -24,6 +24,9 @@ except ImportError:
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 
+# Compatibility for subject_consistency.py: upstream imports this name but never uses it.
+CACHE_DIR = os.path.join(PROJECT_ROOT, "pretrained")
+
 
 from .distributed import (
     get_rank,
@@ -326,25 +329,6 @@ def init_submodules(dimension_list, local=False, **kwargs):
             # Handle legacy and new naming for the MUSIQ-based image quality metric
             submodules_dict[dimension] = {
                 'model_path': kwargs.get(f"{dimension}_musiq_ckpt"),
-            }
-
-        elif dimension == 'mse':
-            submodules_dict[dimension] = {}
-
-        elif dimension == 'lpips':
-            submodules_dict[dimension] = {
-                'alexnet': kwargs.get("lpips_alexnet_ckpt"),
-            }
-
-        elif dimension == 'fid':
-            submodules_dict[dimension] = {
-                'inception': kwargs.get("fid_inception_ckpt"),
-            }
-
-        elif dimension == 'fvd':
-            submodules_dict[dimension] = {
-                'i3d': kwargs.get("fvd_i3d_ckpt"),
-                'chunk_size': kwargs.get("fvd_chunk_size", 16),
             }
 
         elif dimension == 'semantic_alignment':

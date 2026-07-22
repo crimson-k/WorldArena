@@ -34,6 +34,7 @@ pretrain:
   tight_silu: false
   use_sdpa: true
   patch_size: 16
-  folder: /your_absolute_file_path_to_directory_where_pretrained_models_are_contained/
-  checkpoint: jepa-latest.pth.tar  # name of pretrained model file inside folder
+  # Kept consistent with config.yaml; JEDi also receives --model_dir directly.
+  folder: video_quality/JEDi/pretrained_models
+  checkpoint: vith16.pth.tar
   write_tag: jepa

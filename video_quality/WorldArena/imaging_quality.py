@@ -7,8 +7,6 @@ from .utils import load_video, load_dimension_info
 from .distributed import (
     get_world_size,
     get_rank,
-    all_gather,
-    barrier,
     distribute_list_to_rank,
     gather_list_of_dict,
 )

@@ -3,15 +3,12 @@ import clip
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import subprocess
-from urllib.request import urlretrieve
 from .utils import load_video, load_dimension_info, clip_transform
 from tqdm import tqdm
 
 from .distributed import (
     get_world_size,
     get_rank,
-    all_gather,
     barrier,
     distribute_list_to_rank,
     gather_list_of_dict,
@@ -30,21 +27,9 @@ def get_aesthetic_model(cache_folder_or_file):
     else:
         path_to_model = os.path.join(cache_folder_or_file, "sa_0_4_vit_l_14_linear.pth")
     if not os.path.exists(path_to_model):
-        os.makedirs(cache_folder, exist_ok=True)
-        url_model = (
-            "https://github.com/LAION-AI/aesthetic-predictor/blob/main/sa_0_4_vit_l_14_linear.pth?raw=true"
-        )
-        # download aesthetic predictor
-        if not os.path.isfile(path_to_model):
-            try:
-                print(f'trying urlretrieve to download {url_model} to {path_to_model}')
-                urlretrieve(url_model, path_to_model) # unable to download https://github.com/LAION-AI/aesthetic-predictor/blob/main/sa_0_4_vit_l_14_linear.pth?raw=true to pretrained/aesthetic_model/emb_reader/sa_0_4_vit_l_14_linear.pth 
-            except:
-                print(f'unable to download {url_model} to {path_to_model} using urlretrieve, trying wget')
-                wget_command = ['wget', url_model, '-P', os.path.dirname(path_to_model)]
-                subprocess.run(wget_command)
+        raise FileNotFoundError(f"Aesthetic head checkpoint does not exist: {path_to_model}")
     m = nn.Linear(768, 1)
-    s = torch.load(path_to_model)
+    s = torch.load(path_to_model, map_location="cpu")
     m.load_state_dict(s)
     m.eval()
     return m

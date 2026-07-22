@@ -193,26 +193,11 @@ def NDTW(traj_pred,traj_gt,invaild_pred_trajs,invalid_gt_trajs,max_distance_inde
     if invaild_pred_trajs[max_distance_index]:
         ds = 0.0
     else:
-        # di,pi = dtw_distance(traj_pred[:,max_distance_index],traj_gt[:,max_distance_index])
-        # di = di/len(pi)
+        di,pi = dtw_distance(traj_pred[:,max_distance_index],traj_gt[:,max_distance_index])
+        di = di/len(pi)
 
-        # ds = 1/di
-        di, pi = dtw_distance(
-            traj_pred[:, max_distance_index],
-            traj_gt[:, max_distance_index]
-        )
-        if len(pi) == 0:
-            return 0.0
-
-        di = di / len(pi)
-
-        # 数值稳定保护：不改变正常样本计算，仅防止 di=0 崩溃
-        EPS = 1e-12
-        di = max(di, EPS)
-
-        ds = 1.0 / di
+        ds = 1/di
     return ds
-
 
 
 def trim_trajectory(traj):

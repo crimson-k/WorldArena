@@ -1,0 +1,30 @@
+Bootstrap: docker
+From: nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04
+
+%post
+    apt-get update
+    apt-get install -y --no-install-recommends git wget ca-certificates ffmpeg build-essential
+    rm -rf /var/lib/apt/lists/*
+    wget -qO /tmp/micromamba.tar.bz2 https://micro.mamba.pm/api/micromamba/linux-64/latest
+    mkdir -p /opt/micromamba/bin
+    tar -xjf /tmp/micromamba.tar.bz2 -C /opt/micromamba/bin --strip-components=1 bin/micromamba
+
+%files
+    environment-core.yml /opt/worldarena/environment-core.yml
+    environment-jepa.yml /opt/worldarena/environment-jepa.yml
+    requirements.txt /opt/worldarena/requirements.txt
+    requirements_jedi.txt /opt/worldarena/requirements_jedi.txt
+
+%post
+    export MAMBA_ROOT_PREFIX=/opt/micromamba
+    cd /opt/worldarena
+    /opt/micromamba/bin/micromamba create -y -f environment-core.yml
+    /opt/micromamba/bin/micromamba create -y -f environment-jepa.yml
+    /opt/micromamba/bin/micromamba clean -a -y
+
+%environment
+    export MAMBA_ROOT_PREFIX=/opt/micromamba
+    export PATH=/opt/micromamba/envs/WorldArena/bin:/opt/micromamba/bin:$PATH
+
+%runscript
+    exec /opt/micromamba/envs/WorldArena/bin/python "$@"

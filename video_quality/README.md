@@ -1,156 +1,250 @@
-## WorldArena Video Quality Evaluation Environment and Usage Guide
+# WorldArena eight-metric evaluation
 
-Scope: standard metrics, VLM interaction quality/perspectivity/instruction following, JEPA similarity.
-Environment split: `WorldArena` (base/action following), `WorldArena_VLM` (VLM evaluation), `WorldArena_JEPA` (JEPA similarity).
+[中文说明](README_CN.md)
 
-### 1. Prerequisites
-- OS: Linux, CUDA 12.8 (aligned with torch cu128).
-- Python: 3.10.
-- GPU: sufficient for SAM/RAFT/CLIP/VLM inference.
+This evaluator keeps only:
 
-### 2. Base Environment `WorldArena`
-Used for standard metrics and action following.
-```bash
-cd WorldArena
-conda create -y -n WorldArena python=3.10
-conda activate WorldArena
+1. PSNR
+2. SSIM
+3. Aesthetic Quality
+4. Image Quality
+5. JEPA Similarity
+6. Subject Consistency
+7. Trajectory Accuracy
+8. Depth Accuracy
 
-pip install -U pip
-pip install "setuptools<81" wheel
-pip install --no-build-isolation mmcv==2.2.0
-# requirements.txt pins:
-# - transformers==4.37.2 (compatible with pyiqa==0.1.14.1)
-# - numpy==1.26.0 (compatible with sam3==0.1.0)
-pip install -r video_quality/requirements.txt
-pip install ipython
-pip install ninja
-# 5) 再装 mamba-ssm，关键是这个参数
-pip install mamba-ssm --no-build-isolation
-pip install transformers==4.51.3
-# Optional: pip install jupyter notebook jupyterlab
-```
+Track2 and all other video-quality metrics are outside this evaluator.
 
-If you still hit install issues from a stale build cache, clear cache and retry:
-```bash
-pip cache purge
-pip install --no-build-isolation mmcv==2.2.0
-pip install --no-cache-dir -r video_quality/requirements.txt
-```
+## Source boundary
 
-### 3. VLM Environment `WorldArena_VLM`
-Used for Interaction Quality / Perspectivity / Instruction Following.
-```bash
-cd WorldArena
-conda create -y -n WorldArena_VLM python=3.10
-conda activate WorldArena_VLM
-# Core GPU stack (cu128 with torch 2.9.1)
-pip install torch==2.9.1 torchvision==0.24.1 torchaudio==2.9.1 --index-url https://download.pytorch.org/whl/cu128
-# VLM dependencies
-pip install -r video_quality/requirements_worldarena_vlm.txt
-pip install git+https://github.com/huggingface/transformers.git
-```
+The WorldArena reference is pinned to GitHub commit
+[`a918b93f8533a4e9452a224c0ec54d27e527c4bb`](https://github.com/tsinghua-fib-lab/WorldArena/commit/a918b93f8533a4e9452a224c0ec54d27e527c4bb).
 
-### 4. JEPA Environment `WorldArena_JEPA`
-Used for JEPA similarity.
-```bash
-cd WorldArena
-conda create -y -n WorldArena_JEPA python=3.10
-conda activate WorldArena_JEPA
-pip install -r video_quality/requirements_jedi.txt
-# Download weights to video_quality/JEDi/pretrained_models/
-mkdir -p video_quality/JEDi/pretrained_models
-cd video_quality/JEDi/pretrained_models
-wget -O vith16.pth.tar https://dl.fbaipublicfiles.com/jepa/vith16/vith16.pth.tar
-wget -O ssv2-probe.pth.tar https://dl.fbaipublicfiles.com/jepa/vith16/ssv2-probe.pth.tar
-```
+| Metric | Implementation used here |
+|---|---|
+| PSNR / SSIM | Pinned `WorldArena/basic_metrics.py`, unchanged |
+| Aesthetic Quality | Existing local WorldArena implementation; scoring is unchanged, implicit checkpoint download is disabled and `torch.load` uses CPU mapping |
+| Image Quality | Existing local WorldArena MUSIQ implementation; only unused imports differ |
+| JEPA Similarity | Pinned `JEDi/batch.py`; `model_dir`, `config_path`, and `output_root` are passed to `JEDiMetric` |
+| Subject Consistency | Pinned `subject_consistency.py` and `dynamic_degree.py`, unchanged |
+| Trajectory Accuracy | Pinned `trajectory_accuracy.py`, unchanged |
+| Depth Accuracy | Pinned `depth_accuracy.py`, unchanged |
 
-### 5. Data and Naming Rules
-- Prepare `summary.json` (example):
+`subject_consistency.py` imports an undefined and unused upstream `CACHE_DIR` name.
+The compatibility name is supplied by `WorldArena/utils.py`; the metric file is
+not modified. The outer runner only prepares inputs, calls one metric, and saves
+that metric's result.
+
+## Input
+
+The summary is a non-empty JSON list:
+
 ```json
 [
   {
-    "gt_path": "/path/to/gt_video/episode40.mp4",
-    "image": "/path/to/gt_frames/episode40.png",
-    "prompt": [
-      "Lift the narrow-necked bottle using the right arm and hold upright"(this is from the instruction text of Robotwin 2.0 dataset)
-    ](to better inference and evaluate, you can choose to add a prefix "In a fixed robotic workspace, generate a rigid, physically consistent embodied robotic arm. The arm maintains high stability with no deformation and enters the frame to" when you train, inference and evaluate the world model)
-  },
-    ...
+    "gt_path": "/absolute/path/to/episode0.mp4",
+    "generated_video": "/absolute/path/to/generated_episode0.mp4"
+  }
 ]
 ```
-- Generated video directory must be named `modelname_test`; put only videos inside, named `{taskname}_episode_{xx}.mp4`; no subfolders allowed.
 
-### 6. External Weights / Paths
-Configure local weights and I/O paths in [config](config/config.yaml) (do not change model_name: test):
-### 7. Run Evaluation
+The GT filename stem is the sample ID and must be unique.
 
-For the first two evaluations, directly use the generated video directory and summary_json; JEPA requires a GT video directory (only .mp4 files following naming rules, no nesting).
-- VLM metrics (interaction quality, perspectivity, instruction following) (requires `WorldArena_VLM` env):
+`prepare` rebuilds only the frame layouts needed by the selected metrics:
+
+- PSNR/SSIM: GT and generated frames are both lossless PNG, because the pinned
+  `basic_metrics.py` requires GT `frame_*.png` files.
+- Aesthetic, Image, Subject, Trajectory, and Depth: frames are JPEG written with
+  OpenCV's default JPEG quality, which is 95.
+- JEPA reads MP4 files directly and does not use prepared frame directories.
+
+The manifest contains paths only. It does not contain video hashes, checkpoint
+signatures, cache metadata, shards, or automatic file matching.
+
+## Commands
+
+Prepare all eight metrics:
+
 ```bash
-cd video_quality
-bash run_VLM_judge.sh <MODEL_NAME> <VIDEO_DIR> <SUMMARY_JSON> 
+python -m video_quality.cli prepare \
+  --summary /path/to/summary.json \
+  --output-dir /path/to/evaluation
 ```
-- JEPA similarity (requires `WorldArena_JEPA` env):
+
+Run the seven non-JEPA metrics:
+
 ```bash
-cd video_quality
-bash run_evaluation_JEPA.sh <VIDEO_DIR>
+python -m video_quality.cli evaluate \
+  --manifest /path/to/evaluation/run_manifest.json \
+  --output-dir /path/to/evaluation \
+  --config video_quality/config/config.yaml
 ```
-The following metrics first run a format preprocessing step (the bash already includes it), producing the structure under data_action_following configured in config:
-```
-data_action_following
-  ├── gt_dataset/
-  │      ├── {task_name}/
-  │      │   ├── episode_{x}/
-  │      │   │   ├── prompt/
-  │      │   │   │   ├── init_frame.png
-  │      │   │   │   └── prompt.txt
-  │      │   │   └── video/
-  │      │   │       ├── frame_00000.jpg
-  │      │   │       ├── ...
-  │      │   │       └── frame_0000n.jpg
-  │      │   ├── episode_{x+1}/
-  │      │   └── ...
-  │      ├── {task_name1}/
-  │      └── ...
-  ├── generated_dataset/
-  │      ├── {task_name}/
-  │      │   ├── episode_{x}/
-  │      │   │   ├── 1/
-  │      │   │   │   └── video/
-  │      │   │   │       ├── frame_00000.jpg
-  │      │   │   │       ├── ...
-  │      │   │   │       └── frame_0000n.jpg
-  │      │   │   ├── 2/
-  │      │   │   └── 3/
-  │      │   ├── episode_{x+1}/
-  │      │   └── ...
-  │      ├── {task_name1}/
-  │      └── ...
-  │
 
-```
-Videos in subfolders 2 and 3 can be created by modifying the original prompt to guide two different actions; you can call an LLM or write manually. 
+JEPA is an independent dataset-level call. Manually prepare two non-recursive
+directories containing same-name MP4 files, then run:
 
-Use these two prompts to generate two new action videos. If the action-guided video lacks a modifiable prompt, consider using other actions from the same task to achieve different actions.
-
-Name the three directories `modelname_test` `modelname_test_1` `modelname_test_2`:
-
-- action following (requires `WorldArena` env):
 ```bash
-cd video_quality
-bash run_action_following.sh <MODEL_NAME> <GEN_VIDEO_DIR> <SUMMARY_JSON>
-# If using a specific split, run preprocess_datasets_diversity.py first, or ensure config data_action_following path exists
+/path/to/WorldArena_JEPA/bin/python -m video_quality.cli jepa \
+  --real-dir /path/to/real_mp4 \
+  --gen-dir /path/to/generated_mp4 \
+  --output-dir /path/to/evaluation \
+  --config video_quality/config/config.yaml \
+  --jepa-python /path/to/WorldArena_JEPA/bin/python
 ```
-- Other metrics (requires `WorldArena` env):
+
+The pinned JEPA source uses the intersection of the two filename sets and skips
+invalid pairs. It samples 16 frames uniformly, resizes them to 224×224, and
+converts JEDi distance `D` to similarity with `exp(-0.4D)`. `videojedi` writes
+`train.npy` and `test.npy` under the JEPA output directory and reuses them when
+the same output directory is run again.
+
+Aggregate the selected metric files:
+
 ```bash
-cd video_quality
-bash run_evaluation.sh <MODEL_NAME> <GEN_VIDEO_DIR> <SUMMARY_JSON> <METRIC_LIST> 
+python -m video_quality.cli aggregate \
+  --manifest /path/to/evaluation/run_manifest.json \
+  --output-dir /path/to/evaluation
 ```
 
-- Metric aggregation (requires `WorldArena` env):
+Use `--metrics` with a comma-separated subset on `prepare`, `evaluate`, and
+`aggregate`. The accepted names are:
+
+```text
+psnr,ssim,aesthetic_quality,image_quality,jepa_similarity,
+subject_consistency,trajectory_accuracy,depth_accuracy
+```
+
+The `all` command additionally requires `--jepa-real-dir` and `--jepa-gen-dir`
+when JEPA is selected.
+
+## Metric outputs
+
+Each metric is saved independently:
+
+```text
+evaluation/results/metrics/psnr.json
+evaluation/results/metrics/ssim.json
+evaluation/results/metrics/aesthetic_quality.json
+...
+evaluation/results/jepa/results.json
+```
+
+Aggregation produces `results/results.json` and `results/results.csv`, including
+one row per video and an equally weighted `AVERAGE` row. Dataset-level JEPA is
+copied into every video row.
+
+PSNR and SSIM retain the pinned scikit-image behavior. In particular, identical
+frames have infinite PSNR. Trajectory and Depth are reported with WorldArena's
+leaderboard normalization, rather than their raw values:
+
+```text
+Trajectory = clip(raw_NDTW / 40.8540, 0, 1)
+Depth      = 1 - clip((raw_AbsRel - 0.2228) / (4.3711 - 0.2228), 0, 1)
+```
+
+The remaining metrics keep their source outputs.
+
+## Trajectory files
+
+For each sample the runner expects:
+
+```text
+GT episode/traj/traj.npy
+generated episode/1/traj/traj.npy
+```
+
+An existing file is used directly. If only one side is missing, SAM3 runs only
+for that side; if both are missing, it runs for both. There is no hash or model
+signature check. Delete a `traj.npy` yourself when you want that side regenerated.
+
+The configured SAM3 directory must contain:
+
+```text
+sam3.pt
+bpe_simple_vocab_16e6.txt.gz
+```
+
+The current configuration points to `/data1/liuwenhao/Projects/WorldArena/sam`.
+
+## Model weights
+
+Edit `config/config.yaml`. Paths are checked only when their metric is called.
+
+- Aesthetic: OpenAI CLIP ViT-L/14 plus LAION
+  `sa_0_4_vit_l_14_linear.pth`.
+- Image: IQA-PyTorch `musiq_spaq_ckpt-358bb6af.pth`.
+- Subject: local Facebook DINO repository,
+  `dino_vitbase16_pretrain.pth`, and RAFT `raft-things.pth`.
+- Depth: the complete `depth-anything/Depth-Anything-V2-Small-hf` directory.
+- JEPA: `video_quality/JEDi/pretrained_models/vith16.pth.tar` and
+  `ssv2-probe.pth.tar`.
+
+The JEPA files can be downloaded with the commands published in WorldArena:
+
 ```bash
-python video_quality/csv_results/aggregate_results.py --model_name <MODEL_NAME> --base_dir . --csv_name aggregated_results.csv
+mkdir -p video_quality/JEDi/pretrained_models
+wget -O video_quality/JEDi/pretrained_models/vith16.pth.tar \
+  https://dl.fbaipublicfiles.com/jepa/vith16/vith16.pth.tar
+wget -O video_quality/JEDi/pretrained_models/ssv2-probe.pth.tar \
+  https://dl.fbaipublicfiles.com/jepa/vith16/ssv2-probe.pth.tar
 ```
-You can view all metric results under the csv_results directory.
 
+## Environment setup
 
+Core metrics and JEPA use separate Python environments. Run the commands from
+`video_quality/` so the relative requirements paths in the YAML files resolve
+correctly.
+
+Create the core environment for PSNR, SSIM, Aesthetic, Image, Subject,
+Trajectory, and Depth:
+
+```bash
+cd /path/to/WorldArena/video_quality
+conda env create -f environment-core.yml
+conda activate WorldArena
+```
+
+If the environment already exists, update it instead:
+
+```bash
+cd /path/to/WorldArena/video_quality
+conda env update -n WorldArena -f environment-core.yml --prune
+```
+
+Create the independent JEPA environment:
+
+```bash
+cd /path/to/WorldArena/video_quality
+conda env create -f environment-jepa.yml
+conda activate WorldArena_JEPA
+```
+
+To update an existing JEPA environment:
+
+```bash
+cd /path/to/WorldArena/video_quality
+conda env update -n WorldArena_JEPA -f environment-jepa.yml --prune
+```
+
+Verify the command-line entry point in the core environment:
+
+```bash
+conda activate WorldArena
+cd /path/to/WorldArena
+python -m video_quality.cli --help
+```
+
+The removed VLM metrics are not part of this evaluator, so a
+`WorldArena_VLM` environment is no longer required.
+
+### Apptainer/Singularity
+
+The container definition creates both Conda environments:
+
+```bash
+cd /path/to/WorldArena/video_quality
+apptainer build containers/WorldArena.sif containers/WorldArena.def
+```
+
+Use `sudo apptainer build` or `singularity build` if required by the local
+cluster configuration. The Slurm example is `slurm/run_eight_metrics.sbatch`.

@@ -63,7 +63,7 @@
 
 ## 🔍 Overview
 
-WorldArena is a unified benchmark designed to systematically evaluate embodied world models across both **perceptual** and **functional** dimensions. WorldArena assesses models through **(1) video perception quality**, measured with sixteen metrics across six sub-dimensions; **(2) embodied task functionality**, which evaluates world models as synthetic data engines, policy evaluators, and action planners; **(3) human evaluations**, including overall quality, physics adherence, instruction following and head-to-head win rate. Furthermore, we propose **EWMScore**, a holistic metric integrating multi-dimensional performance into a single interpretable index. This work provides a framework for tracking progress toward truly functional world models in embodied AI.
+WorldArena is a unified benchmark for embodied world models. This checkout contains a focused video-quality evaluator with eight retained metrics: PSNR, SSIM, Aesthetic Quality, Image Quality, JEPA Similarity, Subject Consistency, Trajectory Accuracy, and Depth Accuracy. The embodied-task and human-evaluation descriptions below provide broader project context.
 
 
 ## 📦 Dataset
@@ -77,7 +77,7 @@ The project builds on a curated subset of the [RoboTwin 2.0 dataset](https://hug
 
 </div>
 
-Please refer to [video quality metrics](https://github.com/tsinghua-fib-lab/WorldArena/blob/main/video_quality) for implementation.
+See the local eight-metric evaluation guide: [English](video_quality/README.md) / [中文](video_quality/README_CN.md).
 
 ## 🤖 Embodied Task Evaluation
 
