@@ -209,13 +209,26 @@ copied to every sample row during aggregation.
 
 ## Model files
 
-`video_quality/config/config.yaml` expects these repository-relative locations:
+Place models at the paths below. Every path is relative to the WorldArena
+repository root:
 
-- `video_quality/models_downloaded/...` for CLIP, MUSIQ, DINO, RAFT, and Depth
-  Anything.
-- `sam/sam3.pt` and `sam/bpe_simple_vocab_16e6.txt.gz`.
-- `video_quality/JEDi/pretrained_models/vith16.pth.tar`.
-- `video_quality/JEDi/pretrained_models/ssv2-probe.pth.tar`.
+| Model | Path |
+| --- | --- |
+| CLIP ViT-L/14 | `video_quality/models_downloaded/aesthetic_quality/ViT-L-14.pt` |
+| Aesthetic Head | `video_quality/models_downloaded/aesthetic_quality/sa_0_4_vit_l_14_linear.pth` |
+| MUSIQ SPAQ | `video_quality/models_downloaded/image_quality/musiq_spaq_ckpt-358bb6af.pth` |
+| Facebook DINO source | `video_quality/models_downloaded/subject_consistency/facebookresearch_dino_main/` |
+| DINO ViT-B/16 | `video_quality/models_downloaded/subject_consistency/dino_vitbase16_pretrain.pth` |
+| RAFT Things | `video_quality/models_downloaded/subject_consistency/raft-things.pth` |
+| Depth Anything V2 Small | `video_quality/models_downloaded/depth_accuracy/Depth-Anything-V2-Small-hf/` |
+| SAM3 checkpoint | `sam/sam3.pt` |
+| SAM3 tokenizer | `sam/bpe_simple_vocab_16e6.txt.gz` |
+| JEPA ViT-H/16 | `video_quality/JEDi/pretrained_models/vith16.pth.tar` |
+| JEPA SSV2 Probe | `video_quality/JEDi/pretrained_models/ssv2-probe.pth.tar` |
+
+These defaults are also recorded in `video_quality/config/config.yaml`. If a
+model is stored elsewhere, update that configuration; relative paths are still
+resolved from the repository root.
 
 Weights, datasets, caches, and evaluation outputs are intentionally excluded
 from Git.

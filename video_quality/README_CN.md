@@ -202,12 +202,23 @@ JEPA 输出 `exp(-0.4D)`，其中 `D` 为 JEDi 距离。聚合时同一个数据
 
 ## 模型文件
 
-`video_quality/config/config.yaml` 默认使用以下仓库相对目录：
+模型应按下面的路径放置。所有路径都相对于 WorldArena 仓库根目录：
 
-- `video_quality/models_downloaded/...`：CLIP、MUSIQ、DINO、RAFT 和
-  Depth Anything；
-- `sam/sam3.pt` 与 `sam/bpe_simple_vocab_16e6.txt.gz`；
-- `video_quality/JEDi/pretrained_models/vith16.pth.tar`；
-- `video_quality/JEDi/pretrained_models/ssv2-probe.pth.tar`。
+| 模型 | 放置路径 |
+| --- | --- |
+| CLIP ViT-L/14 | `video_quality/models_downloaded/aesthetic_quality/ViT-L-14.pt` |
+| Aesthetic Head | `video_quality/models_downloaded/aesthetic_quality/sa_0_4_vit_l_14_linear.pth` |
+| MUSIQ SPAQ | `video_quality/models_downloaded/image_quality/musiq_spaq_ckpt-358bb6af.pth` |
+| Facebook DINO 源码 | `video_quality/models_downloaded/subject_consistency/facebookresearch_dino_main/` |
+| DINO ViT-B/16 | `video_quality/models_downloaded/subject_consistency/dino_vitbase16_pretrain.pth` |
+| RAFT Things | `video_quality/models_downloaded/subject_consistency/raft-things.pth` |
+| Depth Anything V2 Small | `video_quality/models_downloaded/depth_accuracy/Depth-Anything-V2-Small-hf/` |
+| SAM3 权重 | `sam/sam3.pt` |
+| SAM3 tokenizer | `sam/bpe_simple_vocab_16e6.txt.gz` |
+| JEPA ViT-H/16 | `video_quality/JEDi/pretrained_models/vith16.pth.tar` |
+| JEPA SSV2 Probe | `video_quality/JEDi/pretrained_models/ssv2-probe.pth.tar` |
+
+这些默认位置也记录在 `video_quality/config/config.yaml` 中。若模型放在其他
+位置，可以修改该配置；相对路径仍以仓库根目录为基准。
 
 权重、数据集、缓存和评估结果均不会提交到 Git。
