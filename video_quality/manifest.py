@@ -24,6 +24,7 @@ class Sample:
     generated_frames: str | None = None
     gt_png_frames: str | None = None
     generated_png_frames: str | None = None
+    layout: str = "separate"
 
 
 def atomic_write_json(path: Path, payload: object) -> None:
@@ -56,19 +57,35 @@ def load_summary(path: str | Path) -> list[Sample]:
     for index, item in enumerate(payload):
         if not isinstance(item, dict):
             raise ValueError(f"summary[{index}] must be an object")
-        gt_path = _video_path(item.get("gt_path"), "gt_path", index)
-        generated_video = _video_path(
-            item.get("generated_video"), "generated_video", index
-        )
-        sample_id = gt_path.stem
+        stacked_value = item.get("stacked_video")
+        if stacked_value is not None:
+            stacked_video = _video_path(stacked_value, "stacked_video", index)
+            gt_path = stacked_video
+            generated_video = stacked_video
+            layout = "vertical_gt_top"
+        else:
+            gt_path = _video_path(item.get("gt_path"), "gt_path", index)
+            generated_video = _video_path(
+                item.get("generated_video"), "generated_video", index
+            )
+            layout = "separate"
+
+        explicit_id = item.get("sample_id")
+        if explicit_id is None:
+            sample_id = gt_path.stem
+        elif not isinstance(explicit_id, str) or not explicit_id.strip():
+            raise ValueError(f"summary[{index}].sample_id must be a non-empty string")
+        else:
+            sample_id = explicit_id.strip()
         if sample_id in seen:
-            raise ValueError(f"Duplicate sample_id derived from gt_path: {sample_id}")
+            raise ValueError(f"Duplicate sample_id: {sample_id}")
         seen.add(sample_id)
         samples.append(
             Sample(
                 sample_id=sample_id,
                 gt_path=str(gt_path),
                 generated_video=str(generated_video),
+                layout=layout,
             )
         )
     return samples
@@ -104,6 +121,79 @@ def _extract_frames(video: Path, output_dir: Path, suffix: str) -> None:
     temporary.replace(output_dir)
 
 
+def _extract_stacked_frames(
+    video: Path,
+    outputs: list[tuple[Path, Path, str]],
+) -> None:
+    """Decode once and write GT-top/generated-bottom crops to all requested layouts."""
+    import cv2
+
+    temporary_outputs = []
+    for gt_output, generated_output, suffix in outputs:
+        gt_temporary = gt_output.with_name(gt_output.name + ".tmp")
+        generated_temporary = generated_output.with_name(
+            generated_output.name + ".tmp"
+        )
+        for temporary in (gt_temporary, generated_temporary):
+            if temporary.exists():
+                shutil.rmtree(temporary)
+            temporary.mkdir(parents=True)
+        temporary_outputs.append(
+            (gt_output, generated_output, gt_temporary, generated_temporary, suffix)
+        )
+
+    capture = cv2.VideoCapture(str(video))
+    count = 0
+    try:
+        while True:
+            ok, frame = capture.read()
+            if not ok:
+                break
+            height = frame.shape[0]
+            if height % 2:
+                raise ValueError(
+                    f"Stacked video frame height must be even, got {height}: {video}"
+                )
+            midpoint = height // 2
+            gt_frame = frame[:midpoint]
+            generated_frame = frame[midpoint:]
+            for _, _, gt_temporary, generated_temporary, suffix in temporary_outputs:
+                gt_target = gt_temporary / f"frame_{count:05d}.{suffix}"
+                generated_target = (
+                    generated_temporary / f"frame_{count:05d}.{suffix}"
+                )
+                if not cv2.imwrite(str(gt_target), gt_frame):
+                    raise RuntimeError(f"Failed to write extracted frame: {gt_target}")
+                if not cv2.imwrite(str(generated_target), generated_frame):
+                    raise RuntimeError(
+                        f"Failed to write extracted frame: {generated_target}"
+                    )
+            count += 1
+    except Exception:
+        for _, _, gt_temporary, generated_temporary, _ in temporary_outputs:
+            shutil.rmtree(gt_temporary, ignore_errors=True)
+            shutil.rmtree(generated_temporary, ignore_errors=True)
+        raise
+    finally:
+        capture.release()
+
+    if count == 0:
+        for _, _, gt_temporary, generated_temporary, _ in temporary_outputs:
+            shutil.rmtree(gt_temporary, ignore_errors=True)
+            shutil.rmtree(generated_temporary, ignore_errors=True)
+        raise ValueError(f"Video contains no decodable frames: {video}")
+
+    for gt_output, generated_output, gt_temporary, generated_temporary, _ in (
+        temporary_outputs
+    ):
+        if gt_output.exists():
+            shutil.rmtree(gt_output)
+        if generated_output.exists():
+            shutil.rmtree(generated_output)
+        gt_temporary.replace(gt_output)
+        generated_temporary.replace(generated_output)
+
+
 def prepare(
     summary_json: str | Path,
     output_dir: str | Path,
@@ -116,7 +206,8 @@ def prepare(
     need_png = bool(set(metric_list) & BASIC_METRICS)
     need_jpeg = bool(set(metric_list) & JPEG_METRICS)
 
-    for sample in samples:
+    for index, sample in enumerate(samples, start=1):
+        png_outputs = None
         if need_png:
             gt_png = (
                 output_root
@@ -137,14 +228,14 @@ def prepare(
                 / "1"
                 / "video"
             )
-            _extract_frames(Path(sample.gt_path), gt_png, "png")
-            _extract_frames(Path(sample.generated_video), generated_png, "png")
+            png_outputs = (gt_png, generated_png, "png")
             sample = replace(
                 sample,
                 gt_png_frames=str(gt_png),
                 generated_png_frames=str(generated_png),
             )
 
+        jpeg_outputs = None
         if need_jpeg:
             gt_frames = (
                 output_root
@@ -165,15 +256,34 @@ def prepare(
                 / "1"
                 / "video"
             )
-            # No explicit quality argument: this is OpenCV's default JPEG quality 95.
-            _extract_frames(Path(sample.gt_path), gt_frames, "jpg")
-            _extract_frames(Path(sample.generated_video), generated_frames, "jpg")
+            jpeg_outputs = (gt_frames, generated_frames, "jpg")
             sample = replace(
                 sample,
                 gt_frames=str(gt_frames),
                 generated_frames=str(generated_frames),
             )
+
+        if sample.layout == "vertical_gt_top":
+            outputs = [
+                output for output in (png_outputs, jpeg_outputs) if output is not None
+            ]
+            if outputs:
+                _extract_stacked_frames(Path(sample.gt_path), outputs)
+        else:
+            if png_outputs is not None:
+                _extract_frames(Path(sample.gt_path), png_outputs[0], "png")
+                _extract_frames(
+                    Path(sample.generated_video), png_outputs[1], "png"
+                )
+            if jpeg_outputs is not None:
+                # No explicit quality argument: OpenCV's default JPEG quality is 95.
+                _extract_frames(Path(sample.gt_path), jpeg_outputs[0], "jpg")
+                _extract_frames(
+                    Path(sample.generated_video), jpeg_outputs[1], "jpg"
+                )
+
         prepared.append(sample)
+        print(f"[prepare] {index}/{len(samples)} {sample.sample_id}", flush=True)
 
     manifest_path = output_root / "run_manifest.json"
     atomic_write_json(

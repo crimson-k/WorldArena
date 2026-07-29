@@ -1,10 +1,49 @@
 name: WorldArena
 channels:
-  - pytorch
-  - nvidia
   - conda-forge
 dependencies:
   - python=3.10
-  - pip
+  - pip>=25
   - pip:
-      - -r requirements.txt
+      # CUDA 12.8 / Blackwell-compatible PyTorch stack.
+      - torch==2.10.0
+      - torchvision==0.25.0
+      - torchaudio==2.10.0
+      - transformers==4.51.3
+      - huggingface_hub==0.36.2
+      - accelerate==1.1.0
+      - openai-clip==1.0.1
+      - decord==0.6.0
+      - av==13.1.0
+      - opencv-python-headless==4.11.0.86
+      - timm==1.0.24
+      - sam3==0.1.0
+      # Runtime dependencies used by IQA-PyTorch. The pyiqa package itself is
+      # installed with --no-deps after this YAML because its metadata pins an
+      # obsolete Transformers version.
+      - addict==2.4.0
+      - bitsandbytes==0.50.0
+      - datasets==5.0.0
+      - facexlib==0.3.0
+      - future==1.0.0
+      - icecream==2.2.0
+      - lmdb==2.3.0
+      - pandas==2.3.3
+      - sentencepiece==0.2.2
+      - tensorboard==2.21.0
+      - Pillow==11.3.0
+      - numpy==1.26.0
+      - scipy==1.15.3
+      - scikit-image==0.25.2
+      - einops==0.8.1
+      - fastdtw==0.3.4
+      - fairscale==0.4.13
+      - omegaconf==2.3.0
+      - easydict==1.13
+      - PyYAML==6.0.3
+      - tqdm==4.67.3
+      - requests==2.32.5
+      - packaging==26.0
+      - filelock==3.21.2
+      - setuptools==75.6.0
+      - pytest==9.1.1

@@ -34,7 +34,7 @@ pretrain:
   tight_silu: false
   use_sdpa: true
   patch_size: 16
-  # Kept consistent with config.yaml; JEDi also receives --model_dir directly.
+  # Relative to the WorldArena project root. JEDi also receives --model_dir directly.
   folder: video_quality/JEDi/pretrained_models
   checkpoint: vith16.pth.tar
   write_tag: jepa

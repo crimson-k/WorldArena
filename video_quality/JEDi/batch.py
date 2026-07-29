@@ -50,17 +50,50 @@ def intersect_pairs(real_dir: Path, gen_dir: Path):
     return filtered, real_paths, gen_paths
 
 
+def stacked_pairs(summary_path: Path):
+    """Load unique sample IDs and vertically stacked video paths from a summary."""
+    payload = json.loads(summary_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, list) or not payload:
+        raise ValueError("Stacked summary must be a non-empty JSON list")
+
+    names = []
+    paths = []
+    seen = set()
+    for index, row in enumerate(payload):
+        if not isinstance(row, dict):
+            raise ValueError(f"summary[{index}] must be an object")
+        value = row.get("stacked_video")
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(
+                f"summary[{index}].stacked_video must be a non-empty path string"
+            )
+        path = Path(value).expanduser().resolve()
+        name = row.get("sample_id", path.stem)
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(f"summary[{index}].sample_id must be a non-empty string")
+        name = name.strip()
+        if name in seen:
+            raise ValueError(f"Duplicate sample_id in stacked summary: {name}")
+        if not path.is_file() or not is_valid_mp4(path):
+            raise ValueError(f"Invalid stacked MP4: {path}")
+        seen.add(name)
+        names.append(name)
+        paths.append(path)
+    return names, paths
+
+
 class PairedVideoFolderDataset(Dataset):
     """
     Returns a dict with:
       - "video": FloatTensor [T, 3, H, W] in [0,1]
       - "name":  video stem
     """
-    def __init__(self, names, paths, num_frames=16, size=224):
+    def __init__(self, names, paths, num_frames=16, size=224, crop=None):
         self.names = names
         self.paths = paths
         self.num_frames = int(num_frames)
         self.size = int(size)
+        self.crop = crop
 
     def __len__(self):
         return len(self.paths)
@@ -85,6 +118,19 @@ class PairedVideoFolderDataset(Dataset):
             inds = self._uniform_indices(total, self.num_frames)
             # decord returns NDArray [T, H, W, 3] uint8
             frames = vr.get_batch(inds).asnumpy()
+            if self.crop is not None:
+                height = frames.shape[1]
+                if height % 2:
+                    raise ValueError(
+                        f"Stacked video frame height must be even, got {height}: {path}"
+                    )
+                midpoint = height // 2
+                if self.crop == "top":
+                    frames = frames[:, :midpoint]
+                elif self.crop == "bottom":
+                    frames = frames[:, midpoint:]
+                else:
+                    raise ValueError(f"Unsupported crop: {self.crop}")
 
             # to torch float [T, 3, H, W] in [0,1]
             x = torch.from_numpy(frames).permute(0, 3, 1, 2).float() / 255.0
@@ -114,8 +160,13 @@ def collate_videos(batch):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--real_dir", type=str, required=True, help="Folder of real mp4 videos")
-    parser.add_argument("--gen_dir", type=str, required=True, help="Folder of generated mp4 videos")
+    parser.add_argument("--real_dir", type=str, help="Folder of real mp4 videos")
+    parser.add_argument("--gen_dir", type=str, help="Folder of generated mp4 videos")
+    parser.add_argument(
+        "--stacked_summary",
+        type=str,
+        help="JSON summary with stacked_video inputs (GT top, generated bottom)",
+    )
     parser.add_argument("--num_frames", type=int, default=16, help="Uniformly sampled frames per video")
     parser.add_argument("--size", type=int, default=224, help="Resize shorter side to size x size")
     parser.add_argument("--batch_size", type=int, default=4)
@@ -130,12 +181,32 @@ def main():
 
     torch.manual_seed(args.seed)
 
-    real_dir = Path(args.real_dir)
-    gen_dir = Path(args.gen_dir)
-
-    names, real_paths, gen_paths = intersect_pairs(real_dir, gen_dir)
-    if len(names) == 0:
-        raise RuntimeError("No intersected mp4 filenames (by stem) found between the two folders.")
+    if args.stacked_summary:
+        if args.real_dir or args.gen_dir:
+            raise ValueError(
+                "--stacked_summary cannot be combined with --real_dir/--gen_dir"
+            )
+        names, stacked_paths = stacked_pairs(Path(args.stacked_summary))
+        real_paths = stacked_paths
+        gen_paths = stacked_paths
+        real_crop = "top"
+        gen_crop = "bottom"
+        real_dir = None
+        gen_dir = None
+    else:
+        if not args.real_dir or not args.gen_dir:
+            raise ValueError(
+                "Provide either --stacked_summary or both --real_dir and --gen_dir"
+            )
+        real_dir = Path(args.real_dir)
+        gen_dir = Path(args.gen_dir)
+        names, real_paths, gen_paths = intersect_pairs(real_dir, gen_dir)
+        real_crop = None
+        gen_crop = None
+        if len(names) == 0:
+            raise RuntimeError(
+                "No intersected mp4 filenames (by stem) found between the two folders."
+            )
 
     if args.max_samples and args.max_samples > 0:
         names = names[: args.max_samples]
@@ -145,13 +216,28 @@ def main():
     # save intersection list for reproducibility
     Path(args.save_intersection).write_text(json.dumps(names, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    print(f"[INFO] real videos: {len(list(real_dir.glob('*.mp4')))}")
-    print(f"[INFO] gen  videos: {len(list(gen_dir.glob('*.mp4')))}")
+    if args.stacked_summary:
+        print(f"[INFO] stacked videos: {len(names)}")
+    else:
+        print(f"[INFO] real videos: {len(list(real_dir.glob('*.mp4')))}")
+        print(f"[INFO] gen  videos: {len(list(gen_dir.glob('*.mp4')))}")
     print(f"[INFO] intersected pairs used for eval: {len(names)}")
     print(f"[INFO] saved intersection names -> {args.save_intersection}")
 
-    real_ds = PairedVideoFolderDataset(names, real_paths, num_frames=args.num_frames, size=args.size)
-    gen_ds  = PairedVideoFolderDataset(names, gen_paths,  num_frames=args.num_frames, size=args.size)
+    real_ds = PairedVideoFolderDataset(
+        names,
+        real_paths,
+        num_frames=args.num_frames,
+        size=args.size,
+        crop=real_crop,
+    )
+    gen_ds = PairedVideoFolderDataset(
+        names,
+        gen_paths,
+        num_frames=args.num_frames,
+        size=args.size,
+        crop=gen_crop,
+    )
 
     real_loader = DataLoader(
         real_ds,
@@ -186,15 +272,18 @@ def main():
     print(f"JEDi score (higher is better): {score}")
     print("==============================\n")
     try:
-        gen_dir_name = Path(args.gen_dir).name
-        output_root=args.output_root
-        out_json = Path(output_root) / f"results.json"
+        out_json = Path(args.output_root) / "results.json"
         os.makedirs(out_json.parent, exist_ok=True)
         result = {
-            "gen_dir": str(args.gen_dir),
-            "real_dir": str(args.real_dir),
             "score": float(score) if hasattr(score, "__float__") else score,
         }
+        if args.stacked_summary:
+            result["stacked_summary"] = str(
+                Path(args.stacked_summary).expanduser().resolve()
+            )
+        else:
+            result["gen_dir"] = str(args.gen_dir)
+            result["real_dir"] = str(args.real_dir)
         out_json.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
         print(f"[INFO] Saved JEDi score json -> {out_json}")
     except Exception as e:

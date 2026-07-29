@@ -9,6 +9,7 @@ from tqdm import tqdm
 from .distributed import (
     get_world_size,
     get_rank,
+    get_device,
     barrier,
     distribute_list_to_rank,
     gather_list_of_dict,
@@ -70,7 +71,7 @@ def laion_aesthetic(aesthetic_model, clip_model, video_list, device):
 
 
 def compute_aesthetic_quality(json_dir, submodules_list, **kwargs):
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    device = get_device()
     vit_path = submodules_list.get('clip_model')
     aes_path = submodules_list.get('aesthetic_head')
     if vit_path is None or aes_path is None:

@@ -77,7 +77,21 @@ The project builds on a curated subset of the [RoboTwin 2.0 dataset](https://hug
 
 </div>
 
-See the local eight-metric evaluation guide: [English](video_quality/README.md) / [中文](video_quality/README_CN.md).
+See the local eight-metric evaluation guide: [English](video_quality/README.md) /
+[中文说明](video_quality/README_CN.md) /
+[本机部署详细使用说明](video_quality/USAGE_CN.md).
+
+Create the two evaluation environments from the repository root:
+
+```bash
+conda env create -f video_quality/environment-core.yml
+conda run --no-capture-output -n WorldArena \
+  python -m pip install --no-deps pyiqa==0.1.14.1
+
+conda env create -f video_quality/environment-jepa.yml
+conda run --no-capture-output -n WorldArena_JEPA \
+  python -m pip install --no-deps vjepa==0.1.2 videojedi==1.1.0
+```
 
 ## 🤖 Embodied Task Evaluation
 

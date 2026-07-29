@@ -2,7 +2,8 @@ data/
 WorldArena_Robotwin2.0/
 models_downloaded/
 pretrained_models/
-/sam/
+sam/
+evaluation_runs/
 ssv2-probe.pth.tar
 vith16.pth.tar
 output/

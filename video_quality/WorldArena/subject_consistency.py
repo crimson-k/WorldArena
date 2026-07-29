@@ -18,6 +18,7 @@ import logging
 from .distributed import (
     get_world_size,
     get_rank,
+    get_device,
     all_gather,
     barrier,
     distribute_list_to_rank,
@@ -88,7 +89,7 @@ def subject_consistency(model, video_list, device, read_frame, raft_model_path):
 
 
 def compute_subject_consistency(json_dir, submodules_list, **kwargs):
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    device = get_device()
     submodules_kwargs = dict(submodules_list)
     read_frame = submodules_kwargs.pop('read_frame', False)
     raft_model_path = submodules_kwargs.pop('raft_model', None)

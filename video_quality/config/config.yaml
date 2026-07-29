@@ -1,18 +1,19 @@
 # Checkpoint-only configuration for the focused eight-metric pipeline.
 # Each model path is read only by the metric that needs it.
+# Relative paths are resolved from the WorldArena project root.
 ckpt:
   aesthetic_quality:
-    clip: /path/to/ViT-L-14.pt
-    aesthetic_head: /path/to/sa_0_4_vit_l_14_linear.pth
+    clip: video_quality/models_downloaded/aesthetic_quality/ViT-L-14.pt
+    aesthetic_head: video_quality/models_downloaded/aesthetic_quality/sa_0_4_vit_l_14_linear.pth
   image_quality:
-    musiq: /path/to/musiq_spaq_ckpt-358bb6af.pth
+    musiq: video_quality/models_downloaded/image_quality/musiq_spaq_ckpt-358bb6af.pth
   subject_consistency:
-    repo: /path/to/facebookresearch_dino_main
-    weight: /path/to/dino_vitbase16_pretrain.pth
+    repo: video_quality/models_downloaded/subject_consistency/facebookresearch_dino_main
+    weight: video_quality/models_downloaded/subject_consistency/dino_vitbase16_pretrain.pth
     model: dino_vitb16
-    raft: /path/to/raft-things.pth
-  depth_accuracy: /path/to/Depth-Anything-V2-Small-hf
-  sam3_model_ckpt: /data1/liuwenhao/Projects/WorldArena/sam
+    raft: video_quality/models_downloaded/subject_consistency/raft-things.pth
+  depth_accuracy: video_quality/models_downloaded/depth_accuracy/Depth-Anything-V2-Small-hf
+  sam3_model_ckpt: sam
   jepa_similarity:
     model_dir: video_quality/JEDi/pretrained_models
     config: video_quality/JEDi/configs/vith16_ssv2_16x2x3.yaml

@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CONDA_COMMAND="${CONDA_EXE:-conda}"
+CORE_ENV="${CORE_ENV:-WorldArena}"
+CORE_PYTHON="${CORE_PYTHON:-$("${CONDA_COMMAND}" run -n "${CORE_ENV}" python -c 'import sys; print(sys.executable)')}"
+OUTPUT_ROOT="${OUTPUT_ROOT:-${PROJECT_ROOT}/evaluation_runs/full-validation-500}"
+CONFIG="${PROJECT_ROOT}/video_quality/config/config.yaml"
+MANIFEST="${OUTPUT_ROOT}/run_manifest.json"
+METRICS="psnr,ssim,aesthetic_quality,image_quality,subject_consistency,trajectory_accuracy,depth_accuracy"
+
+mkdir -p "${OUTPUT_ROOT}/logs"
+cd "${PROJECT_ROOT}"
+date -Is > "${OUTPUT_ROOT}/logs/evaluate.started"
+rm -f "${OUTPUT_ROOT}/logs/evaluate.completed" "${OUTPUT_ROOT}/logs/evaluate.failed"
+
+if "${CORE_PYTHON}" -m video_quality.cli evaluate \
+  --manifest "${MANIFEST}" \
+  --output-dir "${OUTPUT_ROOT}" \
+  --config "${CONFIG}" \
+  --metrics "${METRICS}" \
+  --gpus 0,1,2,3 \
+  --processes-per-gpu 1 \
+  2>&1 | tee "${OUTPUT_ROOT}/logs/evaluate.log"; then
+  "${CORE_PYTHON}" -m video_quality.cli aggregate \
+    --manifest "${MANIFEST}" \
+    --output-dir "${OUTPUT_ROOT}" \
+    --metrics "${METRICS}" \
+    2>&1 | tee "${OUTPUT_ROOT}/logs/aggregate-non-jepa.log"
+  date -Is > "${OUTPUT_ROOT}/logs/evaluate.completed"
+else
+  status=$?
+  printf '%s exit=%s\n' "$(date -Is)" "${status}" \
+    > "${OUTPUT_ROOT}/logs/evaluate.failed"
+  exit "${status}"
+fi

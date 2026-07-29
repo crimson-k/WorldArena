@@ -1,7 +1,9 @@
 import csv
 import json
 import math
+import os
 from pathlib import Path
+import subprocess
 import tempfile
 import types
 import unittest
@@ -14,7 +16,14 @@ import numpy as np
 from video_quality.aggregate import aggregate
 from video_quality.constants import normalize_worldarena
 from video_quality.manifest import Sample, atomic_write_json, load_manifest, prepare
-from video_quality.runner import _prepare_missing_trajectories, run_evaluate, run_jepa
+from video_quality.runner import (
+    _checkpoint,
+    _prepare_missing_trajectories,
+    run_distributed_evaluate,
+    run_evaluate,
+    run_jepa,
+)
+from video_quality.timing import MetricTimingLogger, format_duration
 
 
 def write_video(path: Path, value: int, frames: int = 3):
@@ -41,6 +50,19 @@ def write_summary(root: Path, gt_value: int = 20, generated_value: int = 30) -> 
     return summary
 
 
+def write_stacked_video(path: Path, top_value: int, bottom_value: int, frames: int = 3):
+    writer = cv2.VideoWriter(
+        str(path), cv2.VideoWriter_fourcc(*"mp4v"), 8.0, (32, 48)
+    )
+    if not writer.isOpened():
+        raise RuntimeError("OpenCV test video writer is unavailable")
+    for _ in range(frames):
+        top = np.full((24, 32, 3), top_value, dtype=np.uint8)
+        bottom = np.full((24, 32, 3), bottom_value, dtype=np.uint8)
+        writer.write(np.concatenate([top, bottom], axis=0))
+    writer.release()
+
+
 class ManifestTests(unittest.TestCase):
     def test_prepare_uses_separate_png_and_jpeg_layouts(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -60,6 +82,44 @@ class ManifestTests(unittest.TestCase):
             payload = json.loads(Path(manifest).read_text(encoding="utf-8"))
             self.assertNotIn("gt_sha256", payload["samples"][0])
             self.assertFalse(any((root / "out").rglob("*.metadata.json")))
+
+    def test_prepare_crops_vertical_stacked_video_without_reencoding(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            video = root / "stacked.mp4"
+            write_stacked_video(video, 20, 180)
+            summary = root / "summary.json"
+            summary.write_text(
+                json.dumps(
+                    [
+                        {
+                            "sample_id": "task__episode_000040",
+                            "stacked_video": str(video),
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            manifest = prepare(
+                summary, root / "out", ["psnr", "image_quality"]
+            )
+            metrics, samples = load_manifest(manifest)
+            self.assertEqual(metrics, ["psnr", "image_quality"])
+            sample = samples[0]
+            self.assertEqual(sample.sample_id, "task__episode_000040")
+            self.assertEqual(sample.layout, "vertical_gt_top")
+            gt = cv2.imread(str(Path(sample.gt_png_frames) / "frame_00000.png"))
+            generated = cv2.imread(
+                str(Path(sample.generated_png_frames) / "frame_00000.png")
+            )
+            self.assertEqual(gt.shape, (24, 32, 3))
+            self.assertEqual(generated.shape, (24, 32, 3))
+            self.assertLess(float(gt.mean()), float(generated.mean()))
+            self.assertEqual(len(list(Path(sample.gt_frames).glob("*.jpg"))), 3)
+            self.assertEqual(
+                len(list(Path(sample.generated_frames).glob("*.jpg"))), 3
+            )
 
     def test_duplicate_gt_stems_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -84,6 +144,29 @@ class ManifestTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(ValueError, "Duplicate sample_id"):
                 prepare(summary, root / "out", ["psnr"])
+
+
+class TimingLogTests(unittest.TestCase):
+    def test_metric_timing_writes_text_and_structured_logs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            logger = MetricTimingLogger(root, root / "manifest.json", ["psnr"], 4)
+            logger.start_stage(["psnr", "ssim"])
+            logger.finish_stage()
+            logger.finish_run()
+
+            payload = json.loads(
+                (root / "logs" / "metric_timings.json").read_text(encoding="utf-8")
+            )
+            text = (root / "logs" / "metric_timings.log").read_text(
+                encoding="utf-8"
+            )
+            self.assertEqual(payload["status"], "completed")
+            self.assertEqual(payload["world_size"], 4)
+            self.assertEqual(payload["stages"][0]["metrics"], ["psnr", "ssim"])
+            self.assertIn("START psnr+ssim", text)
+            self.assertIn("RUN END", text)
+            self.assertEqual(format_duration(3661.2), "01:01:01")
 
 
 class AggregateTests(unittest.TestCase):
@@ -152,6 +235,152 @@ class ReferencePipelineTests(unittest.TestCase):
                 )
             )
             self.assertTrue(math.isinf(payload["values"]["episode0"]))
+
+
+class DistributedEvaluationTests(unittest.TestCase):
+    @unittest.skipUnless(
+        os.environ.get("WORLD_ARENA_RUN_DISTRIBUTED_TESTS") == "1",
+        "set WORLD_ARENA_RUN_DISTRIBUTED_TESTS=1 to open a local process-group port",
+    )
+    def test_two_workers_shard_and_gather_psnr_ssim(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            summary_rows = []
+            for index, value in enumerate((30, 60)):
+                gt = root / f"episode{index}.mp4"
+                generated = root / f"generated{index}.mp4"
+                write_video(gt, value)
+                write_video(generated, value)
+                summary_rows.append(
+                    {"gt_path": str(gt), "generated_video": str(generated)}
+                )
+            summary = root / "summary.json"
+            summary.write_text(json.dumps(summary_rows), encoding="utf-8")
+            output = root / "output"
+            manifest = prepare(summary, output, ["psnr", "ssim"])
+            config = root / "config.yaml"
+            config.write_text("ckpt: {}\n", encoding="utf-8")
+
+            environment = os.environ.copy()
+            environment["CUDA_VISIBLE_DEVICES"] = ""
+            subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "torch.distributed.run",
+                    "--standalone",
+                    "--nproc_per_node",
+                    "2",
+                    "-m",
+                    "video_quality.cli",
+                    "evaluate",
+                    "--manifest",
+                    str(manifest),
+                    "--output-dir",
+                    str(output),
+                    "--config",
+                    str(config),
+                    "--metrics",
+                    "psnr,ssim",
+                ],
+                check=True,
+                env=environment,
+                cwd=str(Path(__file__).resolve().parents[2]),
+            )
+            for metric in ("psnr", "ssim"):
+                payload = json.loads(
+                    (output / "results" / "metrics" / f"{metric}.json").read_text(
+                        encoding="utf-8"
+                    )
+                )
+                self.assertEqual(set(payload["values"]), {"episode0", "episode1"})
+
+    @patch("video_quality.runner.subprocess.run")
+    def test_gpu_launcher_builds_one_worker_per_selected_gpu(self, run):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = root / "run_manifest.json"
+            atomic_write_json(
+                manifest,
+                {
+                    "version": 2,
+                    "summary_json": "/unused",
+                    "metrics": ["psnr"],
+                    "samples": [
+                        {
+                            "sample_id": f"sample{index}",
+                            "gt_path": "/unused",
+                            "generated_video": "/unused",
+                            "gt_frames": None,
+                            "generated_frames": None,
+                            "gt_png_frames": "/unused",
+                            "generated_png_frames": "/unused",
+                        }
+                        for index in range(3)
+                    ],
+                },
+            )
+            config = root / "config.yaml"
+            config.write_text("ckpt: {}\n", encoding="utf-8")
+            run_distributed_evaluate(
+                manifest, root / "output", ["psnr"], config, [2, 4, 7]
+            )
+            command = run.call_args.args[0]
+            self.assertIn("torch.distributed.run", command)
+            self.assertEqual(command[command.index("--nproc_per_node") + 1], "3")
+            self.assertEqual(
+                run.call_args.kwargs["env"]["CUDA_VISIBLE_DEVICES"], "2,4,7"
+            )
+
+
+    @patch("video_quality.runner.subprocess.run")
+    def test_gpu_launcher_supports_multiple_workers_per_gpu(self, run):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = root / "run_manifest.json"
+            atomic_write_json(
+                manifest,
+                {
+                    "version": 2,
+                    "summary_json": "/unused",
+                    "metrics": ["psnr"],
+                    "samples": [
+                        {
+                            "sample_id": f"sample{index}",
+                            "gt_path": "/unused",
+                            "generated_video": "/unused",
+                            "gt_frames": None,
+                            "generated_frames": None,
+                            "gt_png_frames": "/unused",
+                            "generated_png_frames": "/unused",
+                        }
+                        for index in range(4)
+                    ],
+                },
+            )
+            config = root / "config.yaml"
+            config.write_text("ckpt: {}\n", encoding="utf-8")
+            run_distributed_evaluate(
+                manifest,
+                root / "output",
+                ["psnr"],
+                config,
+                [2, 4],
+                processes_per_gpu=2,
+            )
+            command = run.call_args.args[0]
+            self.assertEqual(command[command.index("--nproc_per_node") + 1], "4")
+            self.assertEqual(
+                run.call_args.kwargs["env"]["CUDA_VISIBLE_DEVICES"], "2,4"
+            )
+
+
+class RelativeConfigPathTests(unittest.TestCase):
+    def test_checkpoint_paths_are_relative_to_project_root(self):
+        resolved = _checkpoint({"ckpt": {"readme": "README.md"}}, "ckpt", "readme")
+        self.assertEqual(
+            Path(resolved), Path(__file__).resolve().parents[2] / "README.md"
+        )
 
 
 class TrajectoryReuseTests(unittest.TestCase):
@@ -235,6 +464,34 @@ class JepaWrapperTests(unittest.TestCase):
             self.assertIn(str(real.resolve()), command)
             self.assertIn(str(generated.resolve()), command)
             self.assertFalse((root / "out" / "cache" / "jepa_pairs").exists())
+
+    @patch("video_quality.runner.subprocess.run")
+    def test_jepa_accepts_stacked_summary(self, run):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            model = root / "model"
+            model.mkdir()
+            summary = root / "summary.json"
+            summary.write_text("[]\n", encoding="utf-8")
+            jepa_config = root / "jepa.yaml"
+            jepa_config.write_text("pretrain: {}\n", encoding="utf-8")
+            config = root / "config.yaml"
+            config.write_text(
+                "ckpt:\n  jepa_similarity:\n"
+                f"    model_dir: {model}\n    config: {jepa_config}\n",
+                encoding="utf-8",
+            )
+            run_jepa(
+                None,
+                None,
+                root / "out",
+                config,
+                "jepa-python",
+                stacked_summary=summary,
+            )
+            command = run.call_args.args[0]
+            self.assertIn("--stacked_summary", command)
+            self.assertIn(str(summary.resolve()), command)
 
 
 if __name__ == "__main__":

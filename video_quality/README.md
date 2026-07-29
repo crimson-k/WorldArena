@@ -1,250 +1,221 @@
-# WorldArena eight-metric evaluation
+# WorldArena eight-metric video evaluation
 
-[中文说明](README_CN.md)
+[中文说明](README_CN.md) | [Detailed Chinese guide](USAGE_CN.md)
 
-This evaluator keeps only:
+This focused evaluator keeps:
 
-1. PSNR
-2. SSIM
-3. Aesthetic Quality
-4. Image Quality
-5. JEPA Similarity
-6. Subject Consistency
-7. Trajectory Accuracy
-8. Depth Accuracy
+`PSNR`, `SSIM`, `Aesthetic Quality`, `Image Quality`, `JEPA Similarity`,
+`Subject Consistency`, `Trajectory Accuracy`, and `Depth Accuracy`.
 
-Track2 and all other video-quality metrics are outside this evaluator.
+Run every command from the repository root. Model paths in
+`video_quality/config/config.yaml` are repository-relative, so moving the clone
+does not require editing the config.
 
-## Source boundary
+## Create the two environments
 
-The WorldArena reference is pinned to GitHub commit
-[`a918b93f8533a4e9452a224c0ec54d27e527c4bb`](https://github.com/tsinghua-fib-lab/WorldArena/commit/a918b93f8533a4e9452a224c0ec54d27e527c4bb).
+The complete normal dependencies are declared in two Conda YAML files:
 
-| Metric | Implementation used here |
-|---|---|
-| PSNR / SSIM | Pinned `WorldArena/basic_metrics.py`, unchanged |
-| Aesthetic Quality | Existing local WorldArena implementation; scoring is unchanged, implicit checkpoint download is disabled and `torch.load` uses CPU mapping |
-| Image Quality | Existing local WorldArena MUSIQ implementation; only unused imports differ |
-| JEPA Similarity | Pinned `JEDi/batch.py`; `model_dir`, `config_path`, and `output_root` are passed to `JEDiMetric` |
-| Subject Consistency | Pinned `subject_consistency.py` and `dynamic_degree.py`, unchanged |
-| Trajectory Accuracy | Pinned `trajectory_accuracy.py`, unchanged |
-| Depth Accuracy | Pinned `depth_accuracy.py`, unchanged |
+- `video_quality/environment-core.yml`: seven non-JEPA metrics.
+- `video_quality/environment-jepa.yml`: JEPA.
 
-`subject_consistency.py` imports an undefined and unused upstream `CACHE_DIR` name.
-The compatibility name is supplied by `WorldArena/utils.py`; the metric file is
-not modified. The outer runner only prepares inputs, calls one metric, and saves
-that metric's result.
+Create clean environments:
 
-## Input
+```bash
+conda env create -f video_quality/environment-core.yml
+conda run --no-capture-output -n WorldArena \
+  python -m pip install --no-deps pyiqa==0.1.14.1
 
-The summary is a non-empty JSON list:
+conda env create -f video_quality/environment-jepa.yml
+conda run --no-capture-output -n WorldArena_JEPA \
+  python -m pip install --no-deps vjepa==0.1.2 videojedi==1.1.0
+```
+
+For environments that already exist, replace `env create` with:
+
+```bash
+conda env update -f video_quality/environment-core.yml --prune
+conda env update -f video_quality/environment-jepa.yml --prune
+```
+
+The two explicit `--no-deps` commands are intentional:
+
+- `pyiqa==0.1.14.1` incorrectly pins `transformers==4.37.2`, while Depth
+  Anything and this evaluator use `transformers==4.51.3`.
+- `vjepa==0.1.2` incorrectly restricts `torchvision<0.20`; RTX 5090 requires
+  the Blackwell-compatible PyTorch 2.10 / CUDA 12.8 stack.
+
+Verify both environments, including a real CUDA kernel:
+
+```bash
+conda run --no-capture-output -n WorldArena python -c \
+  "import torch, pyiqa; x=torch.ones(1,device='cuda'); print(torch.__version__,torch.version.cuda,torch.cuda.get_device_name(0),float(x.sum()))"
+
+conda run --no-capture-output -n WorldArena_JEPA python -c \
+  "import torch, videojedi, vjepa; x=torch.ones(1,device='cuda'); print(torch.__version__,torch.version.cuda,torch.cuda.get_device_name(0),float(x.sum()))"
+```
+
+## Input summaries
+
+### Separate GT and generated videos
 
 ```json
 [
   {
-    "gt_path": "/absolute/path/to/episode0.mp4",
-    "generated_video": "/absolute/path/to/generated_episode0.mp4"
+    "sample_id": "task__episode_000040",
+    "gt_path": "/path/to/gt.mp4",
+    "generated_video": "/path/to/generated.mp4"
   }
 ]
 ```
 
-The GT filename stem is the sample ID and must be unique.
+`sample_id` is optional for separate videos; otherwise the GT filename stem is
+used. IDs must be globally unique.
 
-`prepare` rebuilds only the frame layouts needed by the selected metrics:
+### Vertically stacked videos
 
-- PSNR/SSIM: GT and generated frames are both lossless PNG, because the pinned
-  `basic_metrics.py` requires GT `frame_*.png` files.
-- Aesthetic, Image, Subject, Trajectory, and Depth: frames are JPEG written with
-  OpenCV's default JPEG quality, which is 95.
-- JEPA reads MP4 files directly and does not use prepared frame directories.
+For an MP4 whose top half is GT and bottom half is generated:
 
-The manifest contains paths only. It does not contain video hashes, checkpoint
-signatures, cache metadata, shards, or automatic file matching.
-
-## Commands
-
-Prepare all eight metrics:
-
-```bash
-python -m video_quality.cli prepare \
-  --summary /path/to/summary.json \
-  --output-dir /path/to/evaluation
+```json
+[
+  {
+    "sample_id": "task__episode_000040",
+    "stacked_video": "/path/to/stacked.mp4"
+  }
+]
 ```
 
-Run the seven non-JEPA metrics:
+The frame height must be even. The evaluator decodes each MP4 once and crops at
+`height / 2`, avoiding intermediate video re-encoding. `sample_id` should be
+explicit when identical episode filenames occur under different task folders.
+
+To build a deterministic summary from `<input-root>/<task>/*.mp4`:
 
 ```bash
-python -m video_quality.cli evaluate \
-  --manifest /path/to/evaluation/run_manifest.json \
-  --output-dir /path/to/evaluation \
-  --config video_quality/config/config.yaml
+conda run --no-capture-output -n WorldArena \
+  python video_quality/build_stacked_summary.py \
+  --input-root /path/to/input-root \
+  --output /path/to/stacked-summary.json
 ```
 
-JEPA is an independent dataset-level call. Manually prepare two non-recursive
-directories containing same-name MP4 files, then run:
+## Run the evaluation
+
+Set reusable paths:
 
 ```bash
-/path/to/WorldArena_JEPA/bin/python -m video_quality.cli jepa \
-  --real-dir /path/to/real_mp4 \
-  --gen-dir /path/to/generated_mp4 \
-  --output-dir /path/to/evaluation \
-  --config video_quality/config/config.yaml \
-  --jepa-python /path/to/WorldArena_JEPA/bin/python
+SUMMARY=/path/to/summary.json
+EVAL_ROOT=/path/to/evaluation-output
+CONFIG=video_quality/config/config.yaml
+METRICS=psnr,ssim,aesthetic_quality,image_quality,jepa_similarity,subject_consistency,trajectory_accuracy,depth_accuracy
 ```
 
-The pinned JEPA source uses the intersection of the two filename sets and skips
-invalid pairs. It samples 16 frames uniformly, resizes them to 224×224, and
-converts JEDi distance `D` to similarity with `exp(-0.4D)`. `videojedi` writes
-`train.npy` and `test.npy` under the JEPA output directory and reuses them when
-the same output directory is run again.
-
-Aggregate the selected metric files:
+Prepare PNG/JPEG frame layouts:
 
 ```bash
-python -m video_quality.cli aggregate \
-  --manifest /path/to/evaluation/run_manifest.json \
-  --output-dir /path/to/evaluation
+conda run --no-capture-output -n WorldArena \
+  python -m video_quality.cli prepare \
+  --summary "$SUMMARY" \
+  --output-dir "$EVAL_ROOT" \
+  --metrics "$METRICS"
 ```
 
-Use `--metrics` with a comma-separated subset on `prepare`, `evaluate`, and
-`aggregate`. The accepted names are:
+Run the seven non-JEPA metrics on four GPUs, one worker per GPU:
+
+```bash
+conda run --no-capture-output -n WorldArena \
+  python -m video_quality.cli evaluate \
+  --manifest "$EVAL_ROOT/run_manifest.json" \
+  --output-dir "$EVAL_ROOT" \
+  --config "$CONFIG" \
+  --metrics "$METRICS" \
+  --gpus 0,1,2,3 \
+  --processes-per-gpu 1
+```
+
+`--gpus` selects physical GPU IDs. `--processes-per-gpu` controls how many model
+processes share each selected GPU; one is recommended for model metrics.
+
+Resolve the JEPA interpreter:
+
+```bash
+JEPA_PYTHON="$(conda run -n WorldArena_JEPA python -c 'import sys; print(sys.executable)')"
+```
+
+For a stacked summary:
+
+```bash
+conda run --no-capture-output -n WorldArena \
+  python -m video_quality.cli jepa \
+  --stacked-summary "$SUMMARY" \
+  --output-dir "$EVAL_ROOT" \
+  --config "$CONFIG" \
+  --jepa-python "$JEPA_PYTHON" \
+  --gpu 0
+```
+
+For separate inputs, JEPA accepts two non-recursive directories containing
+same-stem MP4 files:
+
+```bash
+conda run --no-capture-output -n WorldArena \
+  python -m video_quality.cli jepa \
+  --real-dir /path/to/real-mp4 \
+  --gen-dir /path/to/generated-mp4 \
+  --output-dir "$EVAL_ROOT" \
+  --config "$CONFIG" \
+  --jepa-python "$JEPA_PYTHON" \
+  --gpu 0
+```
+
+Aggregate:
+
+```bash
+conda run --no-capture-output -n WorldArena \
+  python -m video_quality.cli aggregate \
+  --manifest "$EVAL_ROOT/run_manifest.json" \
+  --output-dir "$EVAL_ROOT" \
+  --metrics "$METRICS"
+```
+
+## Outputs and timing
+
+Important files:
 
 ```text
-psnr,ssim,aesthetic_quality,image_quality,jepa_similarity,
-subject_consistency,trajectory_accuracy,depth_accuracy
+<evaluation-output>/
+├── run_manifest.json
+├── logs/
+│   ├── metric_timings.log
+│   └── metric_timings.json
+└── results/
+    ├── metrics/<metric>.json
+    ├── jepa/results.json
+    ├── results.json
+    └── results.csv
 ```
 
-The `all` command additionally requires `--jepa-real-dir` and `--jepa-gen-dir`
-when JEPA is selected.
+Only distributed rank 0 writes timing logs. Each stage records start time, end
+time, elapsed seconds, and total non-JEPA wall time. Timing lines are also
+printed to stdout.
 
-## Metric outputs
-
-Each metric is saved independently:
-
-```text
-evaluation/results/metrics/psnr.json
-evaluation/results/metrics/ssim.json
-evaluation/results/metrics/aesthetic_quality.json
-...
-evaluation/results/jepa/results.json
-```
-
-Aggregation produces `results/results.json` and `results/results.csv`, including
-one row per video and an equally weighted `AVERAGE` row. Dataset-level JEPA is
-copied into every video row.
-
-PSNR and SSIM retain the pinned scikit-image behavior. In particular, identical
-frames have infinite PSNR. Trajectory and Depth are reported with WorldArena's
-leaderboard normalization, rather than their raw values:
+Trajectory and Depth are leaderboard-normalized:
 
 ```text
 Trajectory = clip(raw_NDTW / 40.8540, 0, 1)
 Depth      = 1 - clip((raw_AbsRel - 0.2228) / (4.3711 - 0.2228), 0, 1)
 ```
 
-The remaining metrics keep their source outputs.
+JEPA reports `exp(-0.4D)`, where `D` is JEDi distance. Dataset-level JEPA is
+copied to every sample row during aggregation.
 
-## Trajectory files
+## Model files
 
-For each sample the runner expects:
+`video_quality/config/config.yaml` expects these repository-relative locations:
 
-```text
-GT episode/traj/traj.npy
-generated episode/1/traj/traj.npy
-```
+- `video_quality/models_downloaded/...` for CLIP, MUSIQ, DINO, RAFT, and Depth
+  Anything.
+- `sam/sam3.pt` and `sam/bpe_simple_vocab_16e6.txt.gz`.
+- `video_quality/JEDi/pretrained_models/vith16.pth.tar`.
+- `video_quality/JEDi/pretrained_models/ssv2-probe.pth.tar`.
 
-An existing file is used directly. If only one side is missing, SAM3 runs only
-for that side; if both are missing, it runs for both. There is no hash or model
-signature check. Delete a `traj.npy` yourself when you want that side regenerated.
-
-The configured SAM3 directory must contain:
-
-```text
-sam3.pt
-bpe_simple_vocab_16e6.txt.gz
-```
-
-The current configuration points to `/data1/liuwenhao/Projects/WorldArena/sam`.
-
-## Model weights
-
-Edit `config/config.yaml`. Paths are checked only when their metric is called.
-
-- Aesthetic: OpenAI CLIP ViT-L/14 plus LAION
-  `sa_0_4_vit_l_14_linear.pth`.
-- Image: IQA-PyTorch `musiq_spaq_ckpt-358bb6af.pth`.
-- Subject: local Facebook DINO repository,
-  `dino_vitbase16_pretrain.pth`, and RAFT `raft-things.pth`.
-- Depth: the complete `depth-anything/Depth-Anything-V2-Small-hf` directory.
-- JEPA: `video_quality/JEDi/pretrained_models/vith16.pth.tar` and
-  `ssv2-probe.pth.tar`.
-
-The JEPA files can be downloaded with the commands published in WorldArena:
-
-```bash
-mkdir -p video_quality/JEDi/pretrained_models
-wget -O video_quality/JEDi/pretrained_models/vith16.pth.tar \
-  https://dl.fbaipublicfiles.com/jepa/vith16/vith16.pth.tar
-wget -O video_quality/JEDi/pretrained_models/ssv2-probe.pth.tar \
-  https://dl.fbaipublicfiles.com/jepa/vith16/ssv2-probe.pth.tar
-```
-
-## Environment setup
-
-Core metrics and JEPA use separate Python environments. Run the commands from
-`video_quality/` so the relative requirements paths in the YAML files resolve
-correctly.
-
-Create the core environment for PSNR, SSIM, Aesthetic, Image, Subject,
-Trajectory, and Depth:
-
-```bash
-cd /path/to/WorldArena/video_quality
-conda env create -f environment-core.yml
-conda activate WorldArena
-```
-
-If the environment already exists, update it instead:
-
-```bash
-cd /path/to/WorldArena/video_quality
-conda env update -n WorldArena -f environment-core.yml --prune
-```
-
-Create the independent JEPA environment:
-
-```bash
-cd /path/to/WorldArena/video_quality
-conda env create -f environment-jepa.yml
-conda activate WorldArena_JEPA
-```
-
-To update an existing JEPA environment:
-
-```bash
-cd /path/to/WorldArena/video_quality
-conda env update -n WorldArena_JEPA -f environment-jepa.yml --prune
-```
-
-Verify the command-line entry point in the core environment:
-
-```bash
-conda activate WorldArena
-cd /path/to/WorldArena
-python -m video_quality.cli --help
-```
-
-The removed VLM metrics are not part of this evaluator, so a
-`WorldArena_VLM` environment is no longer required.
-
-### Apptainer/Singularity
-
-The container definition creates both Conda environments:
-
-```bash
-cd /path/to/WorldArena/video_quality
-apptainer build containers/WorldArena.sif containers/WorldArena.def
-```
-
-Use `sudo apptainer build` or `singularity build` if required by the local
-cluster configuration. The Slurm example is `slurm/run_eight_metrics.sbatch`.
+Weights, datasets, caches, and evaluation outputs are intentionally excluded
+from Git.

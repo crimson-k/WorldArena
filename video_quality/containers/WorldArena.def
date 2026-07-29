@@ -12,14 +12,14 @@ From: nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04
 %files
     environment-core.yml /opt/worldarena/environment-core.yml
     environment-jepa.yml /opt/worldarena/environment-jepa.yml
-    requirements.txt /opt/worldarena/requirements.txt
-    requirements_jedi.txt /opt/worldarena/requirements_jedi.txt
 
 %post
     export MAMBA_ROOT_PREFIX=/opt/micromamba
     cd /opt/worldarena
     /opt/micromamba/bin/micromamba create -y -f environment-core.yml
+    /opt/micromamba/bin/micromamba run -n WorldArena python -m pip install --no-deps pyiqa==0.1.14.1
     /opt/micromamba/bin/micromamba create -y -f environment-jepa.yml
+    /opt/micromamba/bin/micromamba run -n WorldArena_JEPA python -m pip install --no-deps vjepa==0.1.2 videojedi==1.1.0
     /opt/micromamba/bin/micromamba clean -a -y
 
 %environment

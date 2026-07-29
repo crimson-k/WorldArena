@@ -7,6 +7,7 @@ from .utils import load_video, load_dimension_info
 from .distributed import (
     get_world_size,
     get_rank,
+    get_device,
     distribute_list_to_rank,
     gather_list_of_dict,
 )
@@ -55,7 +56,7 @@ def technical_quality(model, video_list, device, **kwargs):
 
 
 def compute_imaging_quality(json_dir, submodules_list, **kwargs):
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    device = get_device()
     model_path = submodules_list['model_path']
 
     model = MUSIQ(pretrained_model_path=model_path)

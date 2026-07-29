@@ -7,6 +7,7 @@ from transformers import AutoImageProcessor, AutoModelForDepthEstimation
 from .utils import load_video, load_dimension_info
 from .distributed import (
     get_rank,
+    get_device,
     distribute_list_to_rank,
     gather_list_of_dict,
     get_world_size
@@ -125,7 +126,7 @@ def depth_accuracy(depth_model, video_list, gt_root, device):
     return all_results, video_results
 
 def compute_depth_accuracy(json_dir, submodules_list, **kwargs):
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    device = get_device()
     gt_path = kwargs.get('gt_path', None)
     if not gt_path:
         raise ValueError("depth_accuracy 需要 gt_path 参数")

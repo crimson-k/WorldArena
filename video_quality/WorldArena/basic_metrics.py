@@ -11,6 +11,54 @@ def cal_ssim(gt_img, pd_img):
     return structural_similarity(gt_img, pd_img, channel_axis=-1)
 
 
+def compute_basic_metrics_for_pairs(pairs, metric_names=("psnr", "ssim")):
+    """Compute per-sample metrics for explicitly paired frame directories.
+
+    ``pairs`` contains ``(sample_id, gt_frame_dir, generated_frame_dir)``.
+    This form lets the caller shard samples across distributed workers without
+    making every worker scan and evaluate the complete prepared dataset.
+    """
+    metric_funcs = {
+        "psnr": peak_signal_noise_ratio,
+        "ssim": cal_ssim,
+    }
+    for metric in metric_names:
+        if metric not in metric_funcs:
+            raise ValueError(f"Unsupported basic metric: {metric}")
+
+    results = {metric: {} for metric in metric_names}
+    for sample_id, gt_dir, generated_dir in tqdm(pairs):
+        gt_images = sorted(glob.glob(os.path.join(gt_dir, "frame_*.png")))
+        generated_images = sorted(
+            glob.glob(os.path.join(generated_dir, "frame_*.png"))
+            + glob.glob(os.path.join(generated_dir, "frame_*.jpg"))
+        )
+        if not gt_images:
+            raise ValueError(f"No GT frames found for {sample_id}: {gt_dir}")
+        if len(generated_images) != len(gt_images):
+            raise ValueError(
+                f"Frame count mismatch for {sample_id}: "
+                f"generated={len(generated_images)}, gt={len(gt_images)}"
+            )
+
+        totals = {metric: 0.0 for metric in metric_names}
+        for generated_path, gt_path in zip(generated_images, gt_images):
+            generated = np.asanyarray(Image.open(generated_path))
+            gt = np.asanyarray(Image.open(gt_path))
+            if generated.shape != gt.shape:
+                generated = cv2.resize(
+                    generated,
+                    dsize=tuple(gt.shape[:2][::-1]),
+                    interpolation=cv2.INTER_CUBIC,
+                )
+            for metric in metric_names:
+                totals[metric] += metric_funcs[metric](gt, generated)
+
+        for metric in metric_names:
+            results[metric][sample_id] = totals[metric] / len(gt_images)
+    return results
+
+
 def compute_basic_metrics(gt_path, pd_path, metric_names=["psnr", "ssim"]):
 
     metric_funcs = dict({
