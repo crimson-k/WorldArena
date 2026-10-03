@@ -8,7 +8,7 @@ from pathlib import Path
 import shutil
 from typing import Iterable
 
-from .constants import JPEG_METRICS, normalize_metrics
+from .constants import GT_REQUIRED_METRICS, JPEG_METRICS, normalize_metrics
 
 
 MANIFEST_VERSION = 2
@@ -18,7 +18,7 @@ BASIC_METRICS = frozenset({"psnr", "ssim"})
 @dataclass(frozen=True)
 class Sample:
     sample_id: str
-    gt_path: str
+    gt_path: str | None
     generated_video: str
     gt_frames: str | None = None
     generated_frames: str | None = None
@@ -64,15 +64,20 @@ def load_summary(path: str | Path) -> list[Sample]:
             generated_video = stacked_video
             layout = "vertical_gt_top"
         else:
-            gt_path = _video_path(item.get("gt_path"), "gt_path", index)
             generated_video = _video_path(
                 item.get("generated_video"), "generated_video", index
+            )
+            gt_value = item.get("gt_path")
+            gt_path = (
+                _video_path(gt_value, "gt_path", index)
+                if gt_value is not None
+                else None
             )
             layout = "separate"
 
         explicit_id = item.get("sample_id")
         if explicit_id is None:
-            sample_id = gt_path.stem
+            sample_id = (gt_path or generated_video).stem
         elif not isinstance(explicit_id, str) or not explicit_id.strip():
             raise ValueError(f"summary[{index}].sample_id must be a non-empty string")
         else:
@@ -83,7 +88,7 @@ def load_summary(path: str | Path) -> list[Sample]:
         samples.append(
             Sample(
                 sample_id=sample_id,
-                gt_path=str(gt_path),
+                gt_path=str(gt_path) if gt_path is not None else None,
                 generated_video=str(generated_video),
                 layout=layout,
             )
@@ -202,6 +207,17 @@ def prepare(
     output_root = Path(output_dir).expanduser().resolve()
     metric_list = normalize_metrics(metrics)
     samples = load_summary(summary_json)
+    missing_gt = [
+        sample.sample_id
+        for sample in samples
+        if sample.gt_path is None and set(metric_list) & GT_REQUIRED_METRICS
+    ]
+    if missing_gt:
+        raise ValueError(
+            "GT paths are required for GT-dependent metrics "
+            f"({', '.join(sorted(set(metric_list) & GT_REQUIRED_METRICS))}): "
+            + ", ".join(missing_gt)
+        )
     prepared = []
     need_png = bool(set(metric_list) & BASIC_METRICS)
     need_jpeg = bool(set(metric_list) & JPEG_METRICS)
@@ -217,7 +233,7 @@ def prepare(
                 / "default"
                 / sample.sample_id
                 / "video"
-            )
+            ) if sample.gt_path is not None else None
             generated_png = (
                 output_root
                 / "cache"
@@ -231,7 +247,7 @@ def prepare(
             png_outputs = (gt_png, generated_png, "png")
             sample = replace(
                 sample,
-                gt_png_frames=str(gt_png),
+                gt_png_frames=str(gt_png) if gt_png is not None else None,
                 generated_png_frames=str(generated_png),
             )
 
@@ -245,7 +261,7 @@ def prepare(
                 / "default"
                 / sample.sample_id
                 / "video"
-            )
+            ) if sample.gt_path is not None else None
             generated_frames = (
                 output_root
                 / "cache"
@@ -259,7 +275,7 @@ def prepare(
             jpeg_outputs = (gt_frames, generated_frames, "jpg")
             sample = replace(
                 sample,
-                gt_frames=str(gt_frames),
+                gt_frames=str(gt_frames) if gt_frames is not None else None,
                 generated_frames=str(generated_frames),
             )
 
@@ -271,13 +287,15 @@ def prepare(
                 _extract_stacked_frames(Path(sample.gt_path), outputs)
         else:
             if png_outputs is not None:
-                _extract_frames(Path(sample.gt_path), png_outputs[0], "png")
+                if sample.gt_path is not None:
+                    _extract_frames(Path(sample.gt_path), png_outputs[0], "png")
                 _extract_frames(
                     Path(sample.generated_video), png_outputs[1], "png"
                 )
             if jpeg_outputs is not None:
                 # No explicit quality argument: OpenCV's default JPEG quality is 95.
-                _extract_frames(Path(sample.gt_path), jpeg_outputs[0], "jpg")
+                if sample.gt_path is not None:
+                    _extract_frames(Path(sample.gt_path), jpeg_outputs[0], "jpg")
                 _extract_frames(
                     Path(sample.generated_video), jpeg_outputs[1], "jpg"
                 )

@@ -72,8 +72,8 @@ def _write_metric(output_dir: Path, metric: str, values: dict[str, float]) -> Pa
 def _frame_samples(samples: Iterable[Sample]) -> list[Sample]:
     rows = list(samples)
     for sample in rows:
-        if not sample.gt_frames or not sample.generated_frames:
-            raise ValueError(f"JPEG frames were not prepared for {sample.sample_id}")
+        if not sample.generated_frames:
+            raise ValueError(f"Generated JPEG frames were not prepared for {sample.sample_id}")
     return rows
 
 

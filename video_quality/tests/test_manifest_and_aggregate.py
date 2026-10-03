@@ -209,6 +209,54 @@ class AggregateTests(unittest.TestCase):
             self.assertEqual(rows[-1]["PSNR"], "20.000000")
             self.assertEqual(rows[-1]["SSIM"], "0.700000")
 
+    def test_aggregate_merges_metrics_from_previous_run(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = root / "run_manifest.json"
+            atomic_write_json(
+                manifest,
+                {
+                    "version": 2,
+                    "summary_json": "/unused",
+                    "metrics": ["image_quality"],
+                    "samples": [
+                        {
+                            "sample_id": sample_id,
+                            "gt_path": "/unused",
+                            "generated_video": "/unused",
+                            "gt_frames": None,
+                            "generated_frames": None,
+                            "gt_png_frames": None,
+                            "generated_png_frames": None,
+                        }
+                        for sample_id in ("a", "b")
+                    ],
+                },
+            )
+            atomic_write_json(
+                root / "results" / "results.json",
+                {
+                    "rows": [
+                        {"sample_id": "a", "PSNR": 10.0},
+                        {"sample_id": "b", "PSNR": 20.0},
+                    ],
+                    "average": {"sample_id": "AVERAGE", "PSNR": 15.0},
+                },
+            )
+            atomic_write_json(
+                root / "results" / "metrics" / "image_quality.json",
+                {"metric": "image_quality", "values": {"a": 0.4, "b": 0.6}},
+            )
+
+            csv_path = aggregate(manifest, root, ["image_quality"])
+            payload = json.loads((root / "results" / "results.json").read_text())
+            self.assertEqual(set(payload["rows"][0]), {"sample_id", "PSNR", "Image Quality"})
+            self.assertEqual(payload["average"]["PSNR"], 15.0)
+            self.assertEqual(payload["average"]["Image Quality"], 0.5)
+            with csv_path.open(encoding="utf-8", newline="") as stream:
+                header = next(csv.reader(stream))
+            self.assertEqual(header, ["sample_id", "PSNR", "Image Quality"])
+
     def test_worldarena_normalization(self):
         self.assertEqual(normalize_worldarena("trajectory_accuracy", 40.8540), 1.0)
         self.assertEqual(normalize_worldarena("trajectory_accuracy", -1), 0.0)

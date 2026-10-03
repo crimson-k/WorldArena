@@ -601,7 +601,9 @@ sam/
 ### 10.2 `prepare` 的行为
 
 `prepare` 会重建本次所选指标需要的 PNG/JPEG `video` 目录，并重写
-`run_manifest.json`。它不会自动清理所有旧指标结果。
+`run_manifest.json`。它不会自动清理旧指标结果；之后执行 `aggregate` 时，
+已有的指标列会与本次新指标合并到同一个结果表中。合并要求两次评测的
+`sample_id` 集合一致。
 
 ### 10.3 JEPA 缓存
 

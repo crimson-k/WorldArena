@@ -11,6 +11,19 @@ SUPPORTED_METRICS = (
     "depth_accuracy",
 )
 
+# Metrics whose definitions compare generated output against a reference video
+# or reference trajectory.  The generated-only evaluation path uses the
+# complement of this set.
+GT_REQUIRED_METRICS = frozenset(
+    {
+        "psnr",
+        "ssim",
+        "jepa_similarity",
+        "trajectory_accuracy",
+        "depth_accuracy",
+    }
+)
+
 METRIC_COLUMNS = {
     "psnr": "PSNR",
     "ssim": "SSIM",

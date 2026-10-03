@@ -10,6 +10,49 @@
 所有命令都从仓库根目录执行。`video_quality/config/config.yaml` 中的模型路径
 相对于仓库根目录解析，移动项目目录后无需修改配置。
 
+## 复制项目到其他机器
+
+复制本目录给团队成员时，请使用 `rsync`，并排除正在生成且体积较大的
+`evaluation_runs/`。不要使用 `scp`，因为 `scp` 本身不支持排除目录。
+
+团队成员可以在目标机器执行：
+
+```bash
+mkdir -p /目标目录/WorldArena
+
+rsync -ah --partial --info=progress2 \
+  -e "ssh -p 22" \
+  --exclude='/evaluation_runs/' \
+  <用户名>@<源机器IP>:/data1/liuwenhao/Projects/WorldArena/ \
+  /目标目录/WorldArena/
+```
+
+如果是在同一台机器的两个本地目录之间复制：
+
+```bash
+mkdir -p /目标目录/WorldArena
+
+rsync -ah --partial --info=progress2 \
+  --exclude='/evaluation_runs/' \
+  /data1/liuwenhao/Projects/WorldArena/ \
+  /目标目录/WorldArena/
+```
+
+注意：
+
+- 源目录末尾的 `/` 必须保留，表示复制 `WorldArena` 目录中的内容；
+- 当前服务器的 SSH 端口是 `22`；如果源服务器使用其他端口，请将
+  `-e "ssh -p 22"` 中的 `22` 替换为实际端口。不要写成 `rsync -p 端口`，
+  因为 `rsync` 自己的 `-p` 表示保留文件权限，不表示 SSH 端口；
+- 该命令会复制代码、Git 历史和模型权重，只排除评测缓存、日志和结果；
+- `video_quality/models_downloaded/`、`sam/` 和
+  `video_quality/JEDi/pretrained_models/` 虽然被 Git 忽略，但仍会被 `rsync`
+  正常复制；
+- `.gitignore` 只控制 Git，不会让 `scp` 或 `rsync` 自动忽略文件；
+- `--partial` 可以保留未传完的大模型文件，网络中断后再次执行同一命令即可续传；
+- 如果目标目录原本已有 `evaluation_runs/`，`--exclude` 不会将其删除，只会阻止
+  本次传输覆盖该目录。
+
 ## 创建两个环境
 
 完整的常规依赖分别写在：
@@ -170,6 +213,25 @@ conda run --no-capture-output -n WorldArena \
   --manifest "$EVAL_ROOT/run_manifest.json" \
   --output-dir "$EVAL_ROOT" \
   --metrics "$METRICS"
+```
+
+在同一个 `EVAL_ROOT` 中分阶段评测时，后一次 `aggregate` 会保留已有的指标列，
+并把本次新算出的指标加入同一个 `results.json` 和 `results.csv`。如果本次重复
+计算某个已有指标，则使用本次结果覆盖该指标；两次评测的 `sample_id` 必须一致。
+
+### 只评测生成视频自身的指标
+
+如果生成视频的 FPS 与 GT 不同，可以跳过需要 GT 对齐的指标。`--skip-gt-metrics`
+会跳过 PSNR、SSIM、JEPA Similarity、Trajectory Accuracy 和 Depth Accuracy，
+只运行所选的生成视频指标（Aesthetic Quality、Image Quality、Subject Consistency）。
+此模式不需要提供 `--gt-root`，也不会执行视频拼接：
+
+```bash
+python -m video_quality.stack_and_evaluate \
+  --generated-root /path/to/generated-videos \
+  --output-dir /path/to/evaluation-output \
+  --metrics aesthetic_quality,image_quality,subject_consistency \
+  --skip-gt-metrics
 ```
 
 ## 输出与计时
